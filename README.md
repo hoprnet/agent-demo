@@ -58,10 +58,24 @@ treated like a human review (its inline comments are ignored individually, since
    ran `claude setup-token`, so for a team pick the account whose allowance should pay. Revoke it from
    https://claude.ai/settings if it ever leaks, then store a new one.
 
-3. **Create the label** the loop is switched on with:
-   ```bash
-   gh label create claude-loop --repo hoprnet/agent-demo --color 5319E7 --description "Claude coder + reviewer agents act on this PR"
-   ```
+3. **Create the label** the loop is switched on with, `claude-loop`. Any of:
+   - **Web UI:** repository → Issues → Labels → New label; name `claude-loop`, colour `5319E7`, description "Claude coder +
+     reviewer agents act on this PR". Or create it inline the first time you apply it: on a pull request, the Labels gear in
+     the sidebar offers "Create new label" when you type a name that does not exist yet.
+   - **`gh` with the scoped personal token from step 2** (add the repository permission **Issues: read and write**, which
+     is what labels need), no login:
+     ```bash
+     export GH_TOKEN=...   # or read -rs GH_TOKEN as above
+     gh label create claude-loop --repo hoprnet/agent-demo --color 5319E7 --description "Claude coder + reviewer agents act on this PR"
+     ```
+   - **Plain `curl`** with the same token:
+     ```bash
+     curl -sS -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+       https://api.github.com/repos/hoprnet/agent-demo/labels \
+       -d '{"name":"claude-loop","color":"5319E7","description":"Claude coder + reviewer agents act on this PR"}'
+     ```
+   - **`gh auth login`**, then the `gh label create` line above.
+
 4. **Check Actions are enabled** for the repository (Settings, Actions, General: allow all actions, or at least
    `anthropics/*` and `actions/*`). The jobs declare their own permissions, so the default `GITHUB_TOKEN` setting can stay
    read-only.
@@ -76,23 +90,23 @@ Optional: add a `CLAUDE.md` with project conventions; the action reads it, as it
    git checkout -b poc/mean-bug
    sed -i 's|return sum(values) / len(values)|return sum(values) / (len(values) + 1)|' demo/calc.py
    git commit -am "poc: introduce an off-by-one in mean()" && git push -u origin poc/mean-bug
-   gh pr create --fill --repo hoprnet/agent-demo
+   gh pr create --fill --repo hoprnet/agent-demo    # or open the pull request from the branch banner on github.com
    ```
-2. **Follow the PR:** add the label.
-   ```bash
-   gh pr edit <number> --add-label claude-loop
-   ```
+2. **Follow the PR:** add the label, either from the Labels gear in the pull request's sidebar or with
+   `gh pr edit <number> --add-label claude-loop` (needs `gh` authenticated or the scoped `GH_TOKEN` from the setup steps).
    Adding the label fires both workflows once: the reviewer runs the tests, finds `test_mean` failing and requests changes
    with a numbered item naming `demo/calc.py`; that review fires the coder, which fixes the line, pushes, and replies
    `[coder] <hash> …`; the push fires the reviewer again, which approves. Expect three or four runs and a few minutes each.
 3. Try the other entry point: comment on the PR, for example "add a `subtract(a, b)` with a test". The coder acts on it,
    the reviewer checks the push. Anyone with write access can do this; no `@claude` mention is needed on a labelled PR.
 4. Watch under the repository's **Actions** tab (`claude-coder`, `claude-reviewer`) and in the PR's timeline.
-5. **Stop following:** `gh pr edit <number> --remove-label claude-loop`. Nothing runs on the PR after that.
+5. **Stop following:** remove the label, from the sidebar or with `gh pr edit <number> --remove-label claude-loop`.
+   Nothing runs on the PR after that.
 
 ## Follow a new pull request
 
-Add the `claude-loop` label. That is the whole procedure: the workflows live in the repository once and apply to every PR
+Add the `claude-loop` label, from the pull request's sidebar or with `gh pr edit <number> --add-label claude-loop`. That is
+the whole procedure: the workflows live in the repository once and apply to every PR
 that carries the label, and the `labeled` event starts the first round immediately, including for comments that were
 already there. Remove the label to stop; re-add it to continue after the round cap. The label is visible in the PR list, so
 you can see which PRs are under the loop.
