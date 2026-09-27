@@ -18,3 +18,9 @@ def test_mean():
     assert calc.mean([1, 2, 3]) == 2
     with pytest.raises(ValueError):
         calc.mean([])
+
+
+def test_clamp():
+    assert calc.clamp(5, 0, 10) == 5
+    assert calc.clamp(-3, 0, 10) == 0
+    assert calc.clamp(42, 0, 10) == 10

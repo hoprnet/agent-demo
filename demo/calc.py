@@ -15,3 +15,10 @@ def mean(values: list[float]) -> float:
     if not values:
         raise ValueError("mean of an empty list")
     return sum(values) / len(values)
+
+
+def clamp(x: float, lo: float, hi: float) -> float:
+    """x limited to the closed interval [lo, hi]. Raises ValueError when lo > hi."""
+    if lo > hi:
+        raise ValueError(f"empty interval: lo={lo} > hi={hi}")
+    return max(lo, min(x, hi))
