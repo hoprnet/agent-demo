@@ -123,7 +123,7 @@ jobs:
           st=$("$RUNNER_TEMP/loop.sh" reviewer-state "$PR" "${{ steps.head.outputs.start }}")
           if [ -z "$st" ]; then echo "loop: FAIL the reviewer produced no [reviewer] review in this run (postcondition)"; exit 1; fi
           echo "review state: $st"
-          "$RUNNER_TEMP/loop.sh" after-review "$PR" "$st" "${{ steps.rounds.outputs.n }}" "$MAX_ROUNDS"
+          "$RUNNER_TEMP/loop.sh" after-review "$PR" "$st" "${{ steps.rounds.outputs.n }}" "$MAX_ROUNDS" "${{ steps.head.outputs.sha }}"
 
       - name: Cancel held duplicate runs
         # a coder push also fires a pull_request run that GitHub holds for approval; this review already covers it
