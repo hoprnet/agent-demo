@@ -124,6 +124,7 @@ jobs:
             Never edit .github/workflows or AGENTS.md. Never force-push. Never approve or review the PR yourself.
           claude_args: |
             --allowedTools "Read,Glob,Grep,Edit,Write,Bash(python -m pytest:*),Bash(python3 -m pytest:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git push origin HEAD),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh api repos/*/pulls/*/comments),Bash(gh api repos/*/pulls/*/reviews)"
+            --model claude-opus-5-5
             --max-turns 80
 
       - name: Did the coder push?
