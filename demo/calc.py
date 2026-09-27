@@ -11,7 +11,7 @@ def divide(a: float, b: float) -> float:
 
 
 def mean(values: list[float]) -> float:
-    """Arithmetic mean; 0.0 for an empty list, so callers aggregating optional data need no special case."""
+    """Arithmetic mean; raises ValueError on an empty list."""
     if not values:
-        return 0.0
+        raise ValueError("mean of an empty list")
     return sum(values) / len(values)

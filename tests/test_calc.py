@@ -16,4 +16,5 @@ def test_divide():
 
 def test_mean():
     assert calc.mean([1, 2, 3]) == 2
-    assert calc.mean([]) == 0.0
+    with pytest.raises(ValueError):
+        calc.mean([])
