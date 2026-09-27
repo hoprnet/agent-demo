@@ -85,23 +85,33 @@ Optional: add a `CLAUDE.md` with project conventions; the action reads it, as it
 
 ## Run the proof of concept
 
-1. Branch, break something, open a pull request:
+Nothing here needs `gh`: `git` over your SSH key and the GitHub web pages are enough. Where a `gh` one-liner exists it is
+given as an aside for people who are logged in.
+
+1. **Branch, break something, push.**
    ```bash
    git checkout -b poc/mean-bug
    sed -i 's|return sum(values) / len(values)|return sum(values) / (len(values) + 1)|' demo/calc.py
-   git commit -am "poc: introduce an off-by-one in mean()" && git push -u origin poc/mean-bug
-   gh pr create --fill --repo hoprnet/agent-demo    # or open the pull request from the branch banner on github.com
+   git commit -am "poc: introduce an off-by-one in mean()"
+   git push -u origin poc/mean-bug
    ```
-2. **Follow the PR:** add the label, either from the Labels gear in the pull request's sidebar or with
-   `gh pr edit <number> --add-label claude-loop` (needs `gh` authenticated or the scoped `GH_TOKEN` from the setup steps).
-   Adding the label fires both workflows once: the reviewer runs the tests, finds `test_mean` failing and requests changes
-   with a numbered item naming `demo/calc.py`; that review fires the coder, which fixes the line, pushes, and replies
-   `[coder] <hash> …`; the push fires the reviewer again, which approves. Expect three or four runs and a few minutes each.
-3. Try the other entry point: comment on the PR, for example "add a `subtract(a, b)` with a test". The coder acts on it,
-   the reviewer checks the push. Anyone with write access can do this; no `@claude` mention is needed on a labelled PR.
-4. Watch under the repository's **Actions** tab (`claude-coder`, `claude-reviewer`) and in the PR's timeline.
-5. **Stop following:** remove the label, from the sidebar or with `gh pr edit <number> --remove-label claude-loop`.
-   Nothing runs on the PR after that.
+2. **Open the pull request** on the web: go to https://github.com/hoprnet/agent-demo/compare/poc/mean-bug?expand=1 (the
+   repository page also shows a "Compare & pull request" banner for the branch you just pushed), keep `main` as the base,
+   and create it. (`gh pr create --fill --repo hoprnet/agent-demo` does the same.)
+3. **Follow the PR:** on the pull request page, click the gear next to **Labels** in the right-hand sidebar and pick
+   `claude-loop` (or type the name and choose "Create new label" if it does not exist yet). (`gh pr edit <number>
+   --add-label claude-loop`.) Adding the label fires the reviewer: it runs the tests, finds `test_mean` failing and requests
+   changes with a numbered item naming `demo/calc.py`; that review fires the coder, which fixes the line, pushes, and
+   replies `[coder] <hash> …`; the push fires the reviewer again, which approves. Expect three runs of a few minutes each.
+4. **Try the other entry point:** in the pull request's conversation, write a comment such as "add a `subtract(a, b)`
+   with a test" and post it. The coder acts on it, the reviewer checks the push. Anyone with write access to the repository
+   can do this; no `@claude` mention is needed on a labelled PR.
+5. **Watch** under the repository's **Actions** tab (workflows `claude-coder` and `claude-reviewer`; each run's log shows
+   what Claude read and ran) and in the pull request's timeline, where the `[coder]` comments and `[reviewer]` reviews land.
+   If a run finishes in seconds with nothing posted, the PR branch's workflow files differ from `main`'s; see "The one
+   rule about workflow changes" below.
+6. **Stop following:** remove the label from the same sidebar gear (`gh pr edit <number> --remove-label claude-loop`).
+   Nothing runs on the PR after that. Re-adding it starts a new round, which is also how you continue after the round cap.
 
 ## Follow a new pull request
 
@@ -117,9 +127,10 @@ https://github.com/anthropics/claude-code-action/blob/main/examples/claude.yml i
 
 ## How the coder trigger works
 
-`.github/workflows/claude-coder.yml` listens to four events: `issue_comment` (a comment in the PR conversation),
-`pull_request_review_comment` (an inline comment), `pull_request_review` (a submitted review, which is also how Copilot posts)
-and `pull_request: labeled`. The job's `if:` gate decides before the action starts:
+`.github/workflows/claude-coder.yml` listens to three events: `issue_comment` (a comment in the PR conversation),
+`pull_request_review_comment` (an inline comment) and `pull_request_review` (a submitted review, which is also how Copilot
+posts). It does not run on the label event; the reviewer does, and its first review brings the coder in, so the two never
+race on a freshly labelled PR. The job's `if:` gate decides before the action starts:
 
 - the PR must carry `claude-loop` (for `issue_comment` the labels are on `github.event.issue`);
 - posts whose body contains `[coder]` never trigger it (its own replies);
@@ -129,8 +140,10 @@ and `pull_request: labeled`. The job's `if:` gate decides before the action star
 
 Inside the action, `allowed_bots: "claude[bot],copilot-pull-request-reviewer[bot]"` lets those two bots through the
 action's own human-actor check (which otherwise rejects every bot to prevent loops). A step before the action counts
-`[reviewer]` request-changes reviews and stops at `MAX_ROUNDS`, posting a `[coder]` note instead of running. `concurrency`
-queues runs per PR so two comments in a row do not race on the same branch. The prompt tells the coder what to read, how to
+`[reviewer]` request-changes reviews and stops at `MAX_ROUNDS`, posting a `[coder]` note instead of running. A job-level
+`concurrency` group queues runs per PR so two comments in a row do not race on the same branch; it must sit on the job, not
+the workflow, because GitHub keeps only one queued run per group and a workflow-level group would let a run the `if:` gate
+is about to skip (another bot's comment, the coder's own reply) cancel the queued run that matters. The prompt tells the coder what to read, how to
 commit and push (`git push origin HEAD` to the PR branch it checked out with `gh pr checkout`), and how to reply; the
 `--allowedTools` list is the hard limit on what it can run.
 
@@ -138,8 +151,8 @@ commit and push (`git push origin HEAD` to the PR branch it checked out with `gh
 
 `.github/workflows/claude-reviewer.yml` listens to `pull_request: synchronize` (every push to the PR branch, including the
 coder's) and `labeled`, plus `workflow_dispatch` for a manual run by PR number. Pushes by the coder arrive as
-`claude[bot]`, hence `allowed_bots: "claude[bot]"`. The reviewer checks out the PR head, has read-only tools plus
-`python -m pytest` and `gh pr review`, and must post exactly one review: request changes with a numbered list, approve, or,
+`claude[bot]`, hence `allowed_bots: "claude[bot]"`. Both workflows install `pytest` first (the GitHub runner image has
+python but not pytest). The reviewer checks out the PR head, has read-only tools plus `python -m pytest` and `gh pr review`, and must post exactly one review: request changes with a numbered list, approve, or,
 at the round cap, a plain comment that ends the loop. `cancel-in-progress: true` drops a review of a commit that has already
 been superseded by a newer push.
 
@@ -156,6 +169,19 @@ been superseded by a newer push.
    reusable workflow (`on: workflow_call`) and give each repository a ten-line caller with the same `on:` block and
    `uses: <org>/claude-loop/.github/workflows/pr-loop.yml@main` plus `secrets: inherit`. Changing the procedure then changes
    it everywhere at once.
+
+## The one rule about workflow changes
+
+On `pull_request` events (the reviewer's trigger, and the label event) GitHub runs the workflow file as it is on the
+**PR branch**, and the Claude Code GitHub Action then refuses to start unless that file is byte-identical to the copy on
+the default branch. The run still shows green, with "Skipping action due to workflow validation" in the step log, and
+nothing happens. Two consequences:
+
+- A PR branch created before a change to `.github/workflows/` must be brought up to date before the loop works on it:
+  `git checkout <branch> && git merge main && git push`, then remove and re-add the label.
+- A PR that itself edits the workflow files never runs the agents on `pull_request` events; the coder's comment triggers
+  use the default branch's copy and keep working. Change the workflows on `main` (or a PR whose only purpose is that
+  change), not inside a PR the agents are meant to work on. AGENTS.md already forbids the coder to touch them.
 
 ## Cost and limits
 
