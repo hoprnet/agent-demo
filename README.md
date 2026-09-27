@@ -100,10 +100,9 @@ given as an aside for people who are logged in.
    and create it. (`gh pr create --fill --repo hoprnet/agent-demo` does the same.)
 3. **Follow the PR:** on the pull request page, click the gear next to **Labels** in the right-hand sidebar and pick
    `claude-loop` (or type the name and choose "Create new label" if it does not exist yet). (`gh pr edit <number>
-   --add-label claude-loop`.) Adding the label fires both workflows once: the reviewer runs the tests, finds `test_mean`
-   failing and requests changes with a numbered item naming `demo/calc.py`; that review fires the coder, which fixes the
-   line, pushes, and replies `[coder] <hash> …`; the push fires the reviewer again, which approves. Expect three or four runs
-   of a few minutes each.
+   --add-label claude-loop`.) Adding the label fires the reviewer: it runs the tests, finds `test_mean` failing and requests
+   changes with a numbered item naming `demo/calc.py`; that review fires the coder, which fixes the line, pushes, and
+   replies `[coder] <hash> …`; the push fires the reviewer again, which approves. Expect three runs of a few minutes each.
 4. **Try the other entry point:** in the pull request's conversation, write a comment such as "add a `subtract(a, b)`
    with a test" and post it. The coder acts on it, the reviewer checks the push. Anyone with write access to the repository
    can do this; no `@claude` mention is needed on a labelled PR.
@@ -126,9 +125,10 @@ https://github.com/anthropics/claude-code-action/blob/main/examples/claude.yml i
 
 ## How the coder trigger works
 
-`.github/workflows/claude-coder.yml` listens to four events: `issue_comment` (a comment in the PR conversation),
-`pull_request_review_comment` (an inline comment), `pull_request_review` (a submitted review, which is also how Copilot posts)
-and `pull_request: labeled`. The job's `if:` gate decides before the action starts:
+`.github/workflows/claude-coder.yml` listens to three events: `issue_comment` (a comment in the PR conversation),
+`pull_request_review_comment` (an inline comment) and `pull_request_review` (a submitted review, which is also how Copilot
+posts). It does not run on the label event; the reviewer does, and its first review brings the coder in, so the two never
+race on a freshly labelled PR. The job's `if:` gate decides before the action starts:
 
 - the PR must carry `claude-loop` (for `issue_comment` the labels are on `github.event.issue`);
 - posts whose body contains `[coder]` never trigger it (its own replies);
@@ -138,8 +138,10 @@ and `pull_request: labeled`. The job's `if:` gate decides before the action star
 
 Inside the action, `allowed_bots: "claude[bot],copilot-pull-request-reviewer[bot]"` lets those two bots through the
 action's own human-actor check (which otherwise rejects every bot to prevent loops). A step before the action counts
-`[reviewer]` request-changes reviews and stops at `MAX_ROUNDS`, posting a `[coder]` note instead of running. `concurrency`
-queues runs per PR so two comments in a row do not race on the same branch. The prompt tells the coder what to read, how to
+`[reviewer]` request-changes reviews and stops at `MAX_ROUNDS`, posting a `[coder]` note instead of running. A job-level
+`concurrency` group queues runs per PR so two comments in a row do not race on the same branch; it must sit on the job, not
+the workflow, because GitHub keeps only one queued run per group and a workflow-level group would let a run the `if:` gate
+is about to skip (another bot's comment, the coder's own reply) cancel the queued run that matters. The prompt tells the coder what to read, how to
 commit and push (`git push origin HEAD` to the PR branch it checked out with `gh pr checkout`), and how to reply; the
 `--allowedTools` list is the hard limit on what it can run.
 
@@ -147,8 +149,8 @@ commit and push (`git push origin HEAD` to the PR branch it checked out with `gh
 
 `.github/workflows/claude-reviewer.yml` listens to `pull_request: synchronize` (every push to the PR branch, including the
 coder's) and `labeled`, plus `workflow_dispatch` for a manual run by PR number. Pushes by the coder arrive as
-`claude[bot]`, hence `allowed_bots: "claude[bot]"`. The reviewer checks out the PR head, has read-only tools plus
-`python -m pytest` and `gh pr review`, and must post exactly one review: request changes with a numbered list, approve, or,
+`claude[bot]`, hence `allowed_bots: "claude[bot]"`. Both workflows install `pytest` first (the GitHub runner image has
+python but not pytest). The reviewer checks out the PR head, has read-only tools plus `python -m pytest` and `gh pr review`, and must post exactly one review: request changes with a numbered list, approve, or,
 at the round cap, a plain comment that ends the loop. `cancel-in-progress: true` drops a review of a commit that has already
 been superseded by a newer push.
 

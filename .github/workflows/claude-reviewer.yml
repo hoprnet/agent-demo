@@ -13,12 +13,11 @@ on:
         description: pull request number
         required: true
 
-concurrency:
-  group: claude-reviewer-${{ github.event.pull_request.number || inputs.pr }}
-  cancel-in-progress: true
-
 jobs:
   reviewer:
+    concurrency:
+      group: claude-reviewer-${{ github.event.pull_request.number || inputs.pr }}
+      cancel-in-progress: true
     if: github.event_name == 'workflow_dispatch' || (contains(github.event.pull_request.labels.*.name, 'claude-loop') && (github.event.action == 'synchronize' || github.event.label.name == 'claude-loop'))
     runs-on: ubuntu-latest
     permissions:
@@ -39,6 +38,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh pr checkout "$PR"
+
+      - name: Install the test tooling
+        run: python3 -m pip install --quiet --disable-pip-version-check pytest
 
       - name: Count reviewer rounds
         id: rounds
@@ -69,5 +71,5 @@ jobs:
                  `--comment` instead of `--request-changes` and say a human must decide; this ends the loop.
             Never edit files, never commit, never push. Never approve while a test fails.
           claude_args: |
-            --allowedTools "Read,Glob,Grep,Bash(python -m pytest:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr review:*),Bash(gh api repos/*/pulls/*/comments),Bash(gh api repos/*/pulls/*/reviews)"
-            --max-turns 30
+            --allowedTools "Read,Glob,Grep,Bash(python -m pytest:*),Bash(python3 -m pytest:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr review:*),Bash(gh api repos/*/pulls/*/comments),Bash(gh api repos/*/pulls/*/reviews)"
+            --max-turns 50

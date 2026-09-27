@@ -1,7 +1,8 @@
 # The coding agent. Runs when something lands on a pull request that carries the `claude-loop` label:
-# a human comment, a human inline review comment, a submitted review from a human, from Copilot, or from
-# the reviewer agent (marked `[reviewer]`), or the moment the label is added. It fixes code on the PR
-# branch, pushes, and replies on the PR with a `[coder]` comment. See README.md and AGENTS.md.
+# a human comment, a human inline review comment, or a submitted review from a human, from Copilot, or from
+# the reviewer agent (marked `[reviewer]`). It fixes code on the PR branch, pushes, and replies on the PR with
+# a `[coder]` comment. The label event itself starts only the reviewer; its first review pulls the coder in,
+# so the two never race on a fresh label. See README.md and AGENTS.md.
 name: claude-coder
 
 on:
@@ -11,21 +12,21 @@ on:
     types: [created]
   pull_request_review:
     types: [submitted]
-  pull_request:
-    types: [labeled]
-
-concurrency:
-  group: claude-coder-${{ github.event.pull_request.number || github.event.issue.number }}
-  cancel-in-progress: false
 
 jobs:
   coder:
+    # Concurrency sits on the job, not the workflow: a workflow-level group counts every run, including the many
+    # that the `if:` gate below skips (other bots' comments, the coder's own reply), and GitHub keeps only one
+    # queued run per group, so a skipped-to-be run used to cancel the one that mattered (the reviewer's review).
+    # A job that `if:` skips never enters a job-level group.
+    concurrency:
+      group: claude-coder-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: false
     # Gate before the action runs. Every branch requires the label. Bot-authored events pass only when they are
     # the reviewer agent's review (`[reviewer]` marker, not an approval) or Copilot's review; the coder's own
     # `[coder]` posts never re-trigger it; inline review comments count only from humans (Copilot's arrive as
     # part of its review event, which already fires once).
     if: |
-      (github.event_name == 'pull_request' && github.event.label.name == 'claude-loop') ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.issue.labels.*.name, 'claude-loop')
         && !contains(github.event.comment.body, '[coder]')
         && (!endsWith(github.actor, '[bot]') || contains(github.event.comment.body, '[reviewer]'))) ||
@@ -54,6 +55,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh pr checkout "$PR"
+
+      - name: Install the test tooling
+        # ubuntu-latest ships python3 but not pytest; without this step both agents can only trace tests by hand
+        run: python3 -m pip install --quiet --disable-pip-version-check pytest
 
       - name: Count reviewer rounds
         id: rounds
@@ -95,5 +100,5 @@ jobs:
             If nothing needs a change, still post one `[coder]` comment saying so and why.
             Never edit .github/workflows or AGENTS.md. Never force-push. Never approve or review the PR yourself.
           claude_args: |
-            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(python -m pytest:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git push origin HEAD),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh api repos/*/pulls/*/comments),Bash(gh api repos/*/pulls/*/reviews)"
+            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(python -m pytest:*),Bash(python3 -m pytest:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git push origin HEAD),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh api repos/*/pulls/*/comments),Bash(gh api repos/*/pulls/*/reviews)"
             --max-turns 40
