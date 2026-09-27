@@ -63,7 +63,7 @@ Both agents post as `claude[bot]`, so the workflows tell them apart by the `[cod
 4. **Check Actions are enabled** for the repository (Settings, Actions, General: allow all actions, or at least `anthropics/*` and `actions/*`). The jobs declare their own permissions, so the default `GITHUB_TOKEN` setting can stay read-only.
 5. **Push this repository** (`git push origin main`). Workflows only trigger once they exist on the default branch.
 
-Optional: add a `CLAUDE.md` with project conventions; the action reads it, as it reads `AGENTS.md`.
+Both agents run on Claude Opus 5.5 (`--model claude-opus-5-5` in each workflow's `claude_args`); change that line to move them to another model. Optional: add a `CLAUDE.md` with project conventions; the action reads it, as it reads `AGENTS.md`.
 
 ## Run the proof of concept
 
