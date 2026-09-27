@@ -30,14 +30,34 @@ treated like a human review (its inline comments are ignored individually, since
    action uses its Contents, Issues and Pull requests permissions to push, comment and review. Alternatively run
    `/install-github-app` inside Claude Code in this checkout; choose "Skip for now" when it offers to write a workflow,
    since the workflows here are already in place.
-2. **Create the subscription token and store it as a secret.** On your laptop:
-   ```bash
-   claude setup-token        # prints a long-lived OAuth token bound to your Claude subscription
-   gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo hoprnet/agent-demo   # paste the token when asked
-   ```
-   The workflows pass it as `claude_code_oauth_token`; runs then use your Pro/Max/Team usage windows, not API credits.
-   Do not also set `ANTHROPIC_API_KEY`; the workflows never reference it. The token is personal: it bills the subscription
-   of whoever ran `claude setup-token`, so for a team pick the account whose allowance should pay.
+2. **Create the subscription token and store it as a secret.** On your laptop, `claude setup-token` prints a long-lived
+   OAuth token bound to your Claude subscription. Store it as the repository secret `CLAUDE_CODE_OAUTH_TOKEN`; the workflows
+   pass it as `claude_code_oauth_token`, so runs use your Pro/Max/Team usage windows, not API credits. Three ways to store
+   it, none of which puts the token in the repository:
+
+   - **GitHub web UI, no CLI needed.** Repository → Settings → Secrets and variables → Actions → New repository secret;
+     name `CLAUDE_CODE_OAUTH_TOKEN`, paste the token, Add secret. This is the simplest route when `gh` is not logged in.
+   - **`gh` with a scoped personal token, no `gh auth login`.** Create a fine-grained personal access token at
+     https://github.com/settings/personal-access-tokens/new with access to this repository only and one repository
+     permission, **Secrets: read and write** (nothing else), and a short expiry. Then:
+     ```bash
+     read -rs GH_TOKEN && export GH_TOKEN          # paste the personal token; nothing echoes, nothing in history
+     read -rs T && printf '%s' "$T" | gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo hoprnet/agent-demo   # paste the Claude token
+     unset GH_TOKEN T
+     ```
+     `gh secret set` encrypts the value with the repository's public key before it leaves your machine; the personal token
+     can be deleted afterwards.
+   - **`gh auth login`** (browser device flow, about a minute), then `gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo
+     hoprnet/agent-demo` and paste when asked. `/install-github-app` inside Claude Code also stores the secret for you, but it
+     requires this login as well.
+
+   Why this is safe on a public repository: Actions secrets are encrypted at rest, never readable through the API or the UI
+   once saved, masked in workflow logs, and not handed to workflows triggered by pull requests from forks. Do not put the
+   token in any file under the repository, in a workflow `env:` literal, or in a commit message, and do not set
+   `ANTHROPIC_API_KEY` as well; the workflows never reference it. The token is personal: it bills the subscription of whoever
+   ran `claude setup-token`, so for a team pick the account whose allowance should pay. Revoke it from
+   https://claude.ai/settings if it ever leaks, then store a new one.
+
 3. **Create the label** the loop is switched on with:
    ```bash
    gh label create claude-loop --repo hoprnet/agent-demo --color 5319E7 --description "Claude coder + reviewer agents act on this PR"
