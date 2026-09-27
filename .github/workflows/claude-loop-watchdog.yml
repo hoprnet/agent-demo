@@ -1,0 +1,43 @@
+# The loop's watchdog. No Claude, only the repository token, so it costs nothing but a runner minute.
+# It reports what a failing agent run cannot report about itself: a human comment on a labelled pull request
+# that no agent acknowledged (👀) within ACK_MIN minutes, a head commit nobody reviewed, or a `claude-loop`
+# status left pending for STALL_MIN minutes while no agent run is active (a run that died without reporting).
+# Each incident becomes one `[loop]` comment, a red `claude-loop` status and the `claude-loop:error` label.
+# GitHub runs schedules late under load and disables them in public repositories after 60 days without
+# activity; a full GitHub Actions outage stops the watchdog too (see README, "When things go wrong").
+name: claude-loop-watchdog
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: only log what would be reported
+        type: boolean
+        default: false
+
+concurrency:
+  group: claude-loop-watchdog
+  cancel-in-progress: false
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      actions: read
+      statuses: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ACK_MIN: 10
+      STALL_MIN: 30
+      DRY_RUN: ${{ inputs.dry_run == true && '1' || '' }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/claude-loop
+      - run: .github/claude-loop/loop.sh watchdog

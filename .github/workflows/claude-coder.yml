@@ -1,11 +1,12 @@
-# The coding agent. Runs when something lands on a pull request that carries the `claude-loop` label:
-# a human comment, a human inline review comment, or a submitted review from a human, from Copilot, or from
-# the reviewer agent (marked `[reviewer]`). It fixes code on the PR branch, pushes, and replies on the PR with
-# a `[coder]` comment. The label event itself starts only the reviewer; its first review pulls the coder in,
-# so the two never race on a fresh label. When the coder pushed, a second job in the same run calls the
-# reviewer workflow: a push made from inside a workflow is attributed to github-actions[bot] and GitHub holds
-# the pull_request run it would trigger for manual approval, so the loop cannot rely on that event.
-# See README.md and AGENTS.md.
+# The coding agent. Runs when something lands on a pull request that carries the `claude-loop` label: a human
+# comment, a human inline review comment, or a submitted review from a human, from Copilot, or from the reviewer
+# agent (marked `[reviewer]`). It fixes code on the PR branch, pushes, and replies with a `[coder]` comment.
+# The label event itself starts only the reviewer; its first review pulls the coder in.
+#
+# Jobs: `coder` (precheck without Claude, then the agent), `review` (the reviewer workflow, called only when the
+# coder pushed: a push made from inside a workflow cannot wake another workflow, GitHub holds such runs for
+# approval), `report` (on failure: a visible `[loop]` comment, a red `claude-loop` status and the
+# `claude-loop:error` label). The shared logic lives in .github/claude-loop/loop.sh. See README.md and AGENTS.md.
 name: claude-coder
 
 on:
@@ -16,23 +17,22 @@ on:
   pull_request_review:
     types: [submitted]
 
+env:
+  MAX_ROUNDS: 5
+
 jobs:
   coder:
-    # Concurrency sits on the job, not the workflow: a workflow-level group counts every run, including the many
-    # that the `if:` gate below skips (other bots' comments, the coder's own reply), and GitHub keeps only one
-    # queued run per group, so a skipped-to-be run used to cancel the one that mattered (the reviewer's review).
-    # A job that `if:` skips never enters a job-level group.
+    # Concurrency on the job, not the workflow: GitHub keeps one queued run per group, and a workflow-level group
+    # would let runs the `if:` below skips (other bots' comments, the coder's own reply) cancel the queued run that
+    # matters. A job the `if:` skips never enters the group. A queued run that a newer one replaces is harmless:
+    # every run reads all open requests, and the report job ignores runs that never started.
     concurrency:
       group: claude-coder-${{ github.event.pull_request.number || github.event.issue.number }}
       cancel-in-progress: false
-    # Gate before the action runs. Every branch requires the label. Bot-authored events pass only when they are
-    # the reviewer agent's review (`[reviewer]` marker, not an approval) or Copilot's review; the coder's own
-    # `[coder]` posts never re-trigger it; inline review comments count only from humans (Copilot's arrive as
-    # part of its review event, which already fires once). Markers are tested with startsWith, not contains: a
-    # review that quotes "[coder]" in its text (the reviewer's did) must still trigger the coder. Human-authored
-    # events count only from repository owners, organisation members and collaborators (author_association), so a
-    # stranger's comment on a public repository never starts a job; the action would refuse it anyway (write access
-    # check), but this saves the runner minute too.
+    # The gate, evaluated before a runner starts. Every branch needs the label. Human events count only from
+    # owners, organisation members and collaborators. Bot events pass only for the reviewer agent's review
+    # (`[reviewer]` at the start of the body, not an approval) and Copilot's review; the coder's own `[coder]`
+    # posts never re-trigger it, and inline comments count only from humans (Copilot's review fires once).
     if: |
       (github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.issue.labels.*.name, 'claude-loop')
         && !startsWith(github.event.comment.body, '[coder]')
@@ -46,17 +46,19 @@ jobs:
         && ((!endsWith(github.actor, '[bot]') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association))
             || startsWith(github.event.review.body, '[reviewer]') || github.actor == 'copilot-pull-request-reviewer[bot]'))
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     permissions:
       contents: write
       pull-requests: write
       issues: write
       id-token: write
       actions: read
+      statuses: write
     outputs:
       pushed: ${{ steps.pushed.outputs.pushed }}
     env:
       PR: ${{ github.event.pull_request.number || github.event.issue.number }}
-      MAX_ROUNDS: 5
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -64,89 +66,142 @@ jobs:
 
       - name: Check out the PR branch
         id: head
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          gh pr checkout "$PR"
+          # the helper script from the default branch, so a PR cannot change the loop's own logic
+          cp .github/claude-loop/loop.sh "$RUNNER_TEMP/loop.sh"
+          timeout 120 gh pr checkout "$PR"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "branch=$(git branch --show-current)" >> "$GITHUB_OUTPUT"
+          echo "start=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Anything new for the coder?
+        id: pre
+        run: |
+          set +e
+          reqs=$("$RUNNER_TEMP/loop.sh" coder-precheck "$PR"); rc=$?
+          set -e
+          if [ "$rc" -eq 10 ]; then echo "run=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          [ "$rc" -eq 0 ] || { echo "loop: FAIL precheck could not read the pull request (rc $rc)"; exit 1; }
+          echo "run=true" >> "$GITHUB_OUTPUT"
+          { echo "requests<<EOF_REQ"; echo "$reqs"; echo "EOF_REQ"; } >> "$GITHUB_OUTPUT"
+          echo "$reqs"
+
+      - name: Acknowledge
+        if: steps.pre.outputs.run == 'true'
+        run: '"$RUNNER_TEMP/loop.sh" ack "${{ github.event_name }}" "${{ github.event.comment.id }}"'
+
+      - name: Round cap
+        id: rounds
+        if: steps.pre.outputs.run == 'true'
+        run: |
+          n=$("$RUNNER_TEMP/loop.sh" rounds "$PR")
+          echo "n=$n" >> "$GITHUB_OUTPUT"
+          echo "reviewer rounds since the label: $n of $MAX_ROUNDS"
+          if [ "$n" -ge "$MAX_ROUNDS" ]; then
+            "$RUNNER_TEMP/loop.sh" cap "$PR" "$n" "$MAX_ROUNDS"
+            echo "capped=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "capped=false" >> "$GITHUB_OUTPUT"
+            "$RUNNER_TEMP/loop.sh" status "$PR" pending "coder working (${{ github.event_name }} by ${{ github.actor }})" "${{ steps.head.outputs.sha }}"
+          fi
 
       - name: Install the test tooling
-        # ubuntu-latest ships python3 but not pytest; without this step both agents can only trace tests by hand
-        run: python3 -m pip install --quiet --disable-pip-version-check pytest
-
-      - name: Count reviewer rounds
-        id: rounds
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          n=$(gh api "repos/${{ github.repository }}/pulls/$PR/reviews" --paginate \
-                --jq '[.[] | select(.state == "CHANGES_REQUESTED") | select(.body | startswith("[reviewer]"))] | length')
-          echo "n=$n" >> "$GITHUB_OUTPUT"
-          echo "reviewer rounds so far: $n"
-
-      - name: Stop at the round cap
-        if: fromJSON(steps.rounds.outputs.n) >= fromJSON(env.MAX_ROUNDS)
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh pr comment "$PR" --body "[coder] ${{ steps.rounds.outputs.n }} review rounds reached the cap of $MAX_ROUNDS; a human decides what happens next. Remove and re-add the \`claude-loop\` label to continue."
-          echo "cap reached" && exit 0
+        if: steps.rounds.outputs.capped == 'false'
+        # ubuntu-latest ships python3 but not pytest; without it the agents can only trace tests by hand
+        run: timeout 300 python3 -m pip install --quiet --disable-pip-version-check pytest
 
       - name: Run the coding agent
-        if: fromJSON(steps.rounds.outputs.n) < fromJSON(env.MAX_ROUNDS)
+        if: steps.rounds.outputs.capped == 'false'
+        timeout-minutes: 30
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # The action's default bot_id (41898282) is github-actions[bot]'s user ID, so commits it makes are attributed
-          # to that account and GitHub holds the workflow runs they trigger for manual approval ("action_required").
-          # 209825114 is the Claude GitHub App's own bot user, claude[bot]; with it, the coder's pushes trigger the
-          # reviewer like any other push.
+          # 209825114 is the Claude GitHub App's bot user, claude[bot]; the action's default (41898282) is
+          # github-actions[bot], which would attribute the coder's commits to that account.
           bot_id: "209825114"
           bot_name: "claude[bot]"
           allowed_bots: "claude[bot],copilot-pull-request-reviewer[bot]"
           prompt: |
-            You are the coding agent for pull request #${{ env.PR }} in ${{ github.repository }}.
-            Event: ${{ github.event_name }} by ${{ github.actor }}.
-            Read AGENTS.md first and follow it. Then:
+            You are the coding agent for pull request #${{ env.PR }} in ${{ github.repository }}, branch
+            `${{ steps.head.outputs.branch }}` (checked out). Event: ${{ github.event_name }} by ${{ github.actor }}.
+            Read AGENTS.md first and follow it.
+
+            Open requests the workflow found (one JSON object per line; kind comment, inline or review; id; time):
+            ${{ steps.pre.outputs.requests }}
+
             1. Read the pull request (`gh pr view ${{ env.PR }} --comments`, `gh pr diff ${{ env.PR }}`) and the review
-               threads (`gh api repos/${{ github.repository }}/pulls/${{ env.PR }}/comments`, `.../reviews`) and collect every
-               request that has no `[coder]` reply yet. A `[reviewer]` review is a numbered list; treat every item as a request.
-            2. For each request decide: change the code, or answer with a reason. A team member's instruction settles a
-               design question; when it contradicts an argument made earlier in the thread, say so in one sentence,
-               then do it. Make the changes on the checked-out PR branch, run `python -m pytest -q`, and commit with a
-               message that names the request it answers.
-            3. Push with `git push origin HEAD`.
-            4. Reply once on the PR with `gh pr comment ${{ env.PR }} --body "..."`. The body must start with `[coder]`, name
-               the commit hash, and list each request with what was done or why not. Reply on inline threads only
-               through that summary; do not open new review threads.
-            If nothing needs a change, still post one `[coder]` comment saying so and why.
-            Never edit .github/workflows or AGENTS.md. Never force-push. Never approve or review the PR yourself.
+               threads (`gh api repos/${{ github.repository }}/pulls/${{ env.PR }}/comments`, `.../reviews`). Handle every
+               open request above, and any other request without a `[coder]` answer. A `[reviewer]` review is a numbered
+               list; each item is a request. Ignore "For a human:" notes; they are not for you.
+            2. For each request: change the code, or answer with a reason. A team member's instruction settles a design
+               question; when it contradicts an argument made earlier in the thread, say so in one sentence, then do it.
+               Run `python -m pytest -q` before committing; commit with a message naming the request.
+            3. Push with `git push origin HEAD`. If the push is rejected because the branch moved, run
+               `git pull --rebase origin ${{ steps.head.outputs.branch }}`, run the tests again, and push again. If the
+               rebase conflicts, run `git rebase --abort` and say so in your comment instead of forcing anything.
+            4. For each inline request (kind inline), reply in its thread:
+               `gh api repos/${{ github.repository }}/pulls/${{ env.PR }}/comments/<id>/replies -f body='[coder] ...'`.
+            5. Post exactly one summary with `gh pr comment ${{ env.PR }} --body "..."`. It must start with `[coder]`, name
+               the commit hash (or say no commit), list each request with what was done or why not, and end with this
+               exact last line: <!-- seen-until: ${{ steps.head.outputs.start }} -->
+            If nothing needs a change, still post the summary saying so and why.
+            Never edit .github/ or AGENTS.md. Never force-push. Never approve, review, retitle or close the PR.
           claude_args: |
-            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(python -m pytest:*),Bash(python3 -m pytest:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git push origin HEAD),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh api repos/*/pulls/*/comments),Bash(gh api repos/*/pulls/*/reviews)"
+            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(python -m pytest:*),Bash(python3 -m pytest:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git add:*),Bash(git commit:*),Bash(git push origin HEAD),Bash(git fetch:*),Bash(git pull --rebase:*),Bash(git rebase:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh api repos/*/pulls/*/comments),Bash(gh api repos/*/pulls/*/reviews),Bash(gh api repos/*/pulls/*/comments/*/replies:*)"
             --model claude-opus-5-5
             --max-turns 80
+
+      - name: Postcondition, the coder replied
+        if: steps.rounds.outputs.capped == 'false'
+        run: |
+          if "$RUNNER_TEMP/loop.sh" coder-posted "$PR" "${{ steps.head.outputs.start }}"; then echo "coder replied"; else
+            echo "loop: FAIL the coder did not post its [coder] reply in this run (postcondition)"; exit 1; fi
 
       - name: Did the coder push?
         id: pushed
         if: always() && steps.head.outcome == 'success'
         run: |
-          git fetch -q origin "${{ steps.head.outputs.branch }}"
+          timeout 120 git fetch -q origin "${{ steps.head.outputs.branch }}"
           now=$(git rev-parse "origin/${{ steps.head.outputs.branch }}")
-          if [ "$now" != "${{ steps.head.outputs.sha }}" ]; then echo "pushed=true" >> "$GITHUB_OUTPUT"; echo "new head $now"; else echo "pushed=false" >> "$GITHUB_OUTPUT"; echo "no push"; fi
+          if [ "$now" != "${{ steps.head.outputs.sha }}" ]; then echo "pushed=true" >> "$GITHUB_OUTPUT"; echo "new head $now"
+          else echo "pushed=false" >> "$GITHUB_OUTPUT"; echo "no push"; fi
 
-  # The reviewer, as the second job of this run, only when the coder pushed. Same file, same rules as the
-  # standalone reviewer workflow; its review, if it requests changes, triggers the next coder run as usual.
+      - name: Settle the status
+        if: success() && steps.pre.outputs.run == 'true' && steps.rounds.outputs.capped == 'false' && steps.pushed.outputs.pushed == 'false'
+        run: '"$RUNNER_TEMP/loop.sh" settle "$PR"'
+
+  # The reviewer, as the second job of this run, whenever the branch moved (even if the coder then failed).
   review:
     needs: coder
-    if: needs.coder.outputs.pushed == 'true'
+    if: always() && needs.coder.outputs.pushed == 'true'
     uses: ./.github/workflows/claude-reviewer.yml
     with:
-      pr: ${{ github.event.pull_request.number || github.event.issue.number }}
+      pr: ${{ format('{0}', github.event.pull_request.number || github.event.issue.number) }}
     secrets: inherit
     permissions:
       contents: read
       pull-requests: write
       issues: write
       id-token: write
+      actions: write
+      statuses: write
+
+  # Make a failure visible on the PR. A queued run that a newer one replaced never started and is not reported.
+  report:
+    needs: coder
+    if: always() && (needs.coder.result == 'failure' || needs.coder.result == 'cancelled')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
       actions: read
+      statuses: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/claude-loop
+      - run: .github/claude-loop/loop.sh report "${{ github.event.pull_request.number || github.event.issue.number }}" coder

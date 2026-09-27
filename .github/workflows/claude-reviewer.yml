@@ -1,9 +1,9 @@
 # The review agent. Runs when the `claude-loop` label is added, on every human push to a labelled pull request,
-# and, through workflow_call, as the second job of the coder's run right after the coder pushed (GitHub holds
-# runs that a workflow's own push triggers for manual approval, so the coder's pushes cannot wake the reviewer
-# through an event). It reads the new commits, runs the tests, checks the coder's claims, and submits ONE
-# pull request review marked `[reviewer]`: "request changes" with a numbered list, or "approve". It never
-# edits or pushes. A "request changes" review triggers the coder; an approval ends the loop.
+# by hand (workflow_dispatch), and through workflow_call as the second job of the coder's run right after the
+# coder pushed. It runs the tests, checks the coder's claims, and submits ONE review marked `[reviewer]`:
+# "request changes" with a numbered list, or "approve". It never edits or pushes. A "request changes" review
+# triggers the coder; an approval ends the loop. The `claude-loop` commit status on the PR head follows it:
+# pending while it works or while changes are open, green on approval, red on failure or at the round cap.
 name: claude-reviewer
 
 on:
@@ -14,6 +14,10 @@ on:
       pr:
         description: pull request number
         required: true
+      force:
+        description: review even if this head was already reviewed
+        type: boolean
+        default: true
   workflow_call:
     inputs:
       pr:
@@ -21,63 +25,80 @@ on:
         required: true
         type: string
 
+env:
+  MAX_ROUNDS: 5
+
 jobs:
   reviewer:
+    # a newer push cancels a review in progress: only the latest head is worth reviewing
     concurrency:
-      group: claude-reviewer-${{ github.event.pull_request.number || inputs.pr }}
+      group: claude-reviewer-${{ inputs.pr || github.event.pull_request.number }}
       cancel-in-progress: true
-    # inputs.pr is set by workflow_dispatch and by the coder's workflow_call; the pull_request branch needs the label
+    # inputs.pr is set by workflow_dispatch and by the coder's workflow_call; pull_request events need the label
     if: inputs.pr != '' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'claude-loop') && (github.event.action == 'synchronize' || github.event.label.name == 'claude-loop'))
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     permissions:
       contents: read
       pull-requests: write
       issues: write
       id-token: write
-      actions: read
+      actions: write
+      statuses: write
     env:
-      PR: ${{ github.event.pull_request.number || inputs.pr }}
-      MAX_ROUNDS: 5
+      PR: ${{ inputs.pr || github.event.pull_request.number }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Check out the PR head
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh pr checkout "$PR"
+        id: head
+        run: |
+          cp .github/claude-loop/loop.sh "$RUNNER_TEMP/loop.sh"
+          timeout 120 gh pr checkout "$PR"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "start=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      - name: Already reviewed?
+        id: pre
+        run: |
+          if [ "${{ inputs.force }}" = "true" ]; then echo "run=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          set +e; "$RUNNER_TEMP/loop.sh" reviewer-precheck "$PR" "${{ steps.head.outputs.sha }}"; rc=$?; set -e
+          if [ "$rc" -eq 10 ]; then echo "run=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          [ "$rc" -eq 0 ] || { echo "loop: FAIL precheck could not read the pull request (rc $rc)"; exit 1; }
+          echo "run=true" >> "$GITHUB_OUTPUT"
+
+      - name: Rounds and status
+        id: rounds
+        if: steps.pre.outputs.run == 'true'
+        run: |
+          n=$("$RUNNER_TEMP/loop.sh" rounds "$PR")
+          echo "n=$n" >> "$GITHUB_OUTPUT"
+          "$RUNNER_TEMP/loop.sh" status "$PR" pending "reviewer checking ${{ steps.head.outputs.sha }}" "${{ steps.head.outputs.sha }}"
 
       - name: Install the test tooling
-        run: python3 -m pip install --quiet --disable-pip-version-check pytest
-
-      - name: Count reviewer rounds
-        id: rounds
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          n=$(gh api "repos/${{ github.repository }}/pulls/$PR/reviews" --paginate \
-                --jq '[.[] | select(.state == "CHANGES_REQUESTED") | select(.body | startswith("[reviewer]"))] | length')
-          echo "n=$n" >> "$GITHUB_OUTPUT"
+        if: steps.pre.outputs.run == 'true'
+        run: timeout 300 python3 -m pip install --quiet --disable-pip-version-check pytest
 
       - name: Run the review agent
+        if: steps.pre.outputs.run == 'true'
+        timeout-minutes: 18
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # The action's default bot_id (41898282) is github-actions[bot]'s user ID, so commits it makes are attributed
-          # to that account and GitHub holds the workflow runs they trigger for manual approval ("action_required").
-          # 209825114 is the Claude GitHub App's own bot user, claude[bot]; with it, the coder's pushes trigger the
-          # reviewer like any other push.
           bot_id: "209825114"
           bot_name: "claude[bot]"
           allowed_bots: "claude[bot]"
           prompt: |
             You are the review agent for pull request #${{ env.PR }} in ${{ github.repository }}. The checked-out tree is
-            the PR head. Read AGENTS.md first and follow it. Then:
+            the PR head ${{ steps.head.outputs.sha }}. Read AGENTS.md first and follow it. Then:
             1. Read what changed since the last `[reviewer]` review (`gh pr view ${{ env.PR }} --comments`, `git log`,
-               `gh pr diff ${{ env.PR }}`), and every `[coder]` comment since then.
+               `gh pr diff ${{ env.PR }}`), every `[coder]` comment since then, and every human comment and inline
+               comment, so you know what was asked.
             2. Verify, do not trust: run `python -m pytest -q`; read the changed code; check each claim in the `[coder]`
-               comments against the diff and the test output.
+               comments against the diff and the test output; check that each human request was either done or answered.
             3. Submit exactly one review with `gh pr review ${{ env.PR }}`:
                - `--request-changes --body "..."` when anything the coder can change must change. The body starts with
                  `[reviewer]`, then a numbered list; every item names file and line, says what is wrong and what would
@@ -95,3 +116,36 @@ jobs:
             --allowedTools "Read,Glob,Grep,Bash(python -m pytest:*),Bash(python3 -m pytest:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr review:*),Bash(gh api repos/*/pulls/*/comments),Bash(gh api repos/*/pulls/*/reviews)"
             --model claude-opus-5-5
             --max-turns 80
+
+      - name: Postcondition and status
+        if: steps.pre.outputs.run == 'true'
+        run: |
+          st=$("$RUNNER_TEMP/loop.sh" reviewer-state "$PR" "${{ steps.head.outputs.start }}")
+          if [ -z "$st" ]; then echo "loop: FAIL the reviewer produced no [reviewer] review in this run (postcondition)"; exit 1; fi
+          echo "review state: $st"
+          "$RUNNER_TEMP/loop.sh" after-review "$PR" "$st" "${{ steps.rounds.outputs.n }}" "$MAX_ROUNDS"
+
+      - name: Cancel held duplicate runs
+        # a coder push also fires a pull_request run that GitHub holds for approval; this review already covers it
+        if: always() && steps.head.outcome == 'success'
+        run: '"$RUNNER_TEMP/loop.sh" cancel-held || true'
+
+  # Make a failure visible on the PR. A review cancelled by a newer push is expected and not reported.
+  report:
+    needs: reviewer
+    if: always() && needs.reviewer.result == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      actions: read
+      statuses: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/claude-loop
+      - run: .github/claude-loop/loop.sh report "${{ inputs.pr || github.event.pull_request.number }}" reviewer

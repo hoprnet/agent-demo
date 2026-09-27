@@ -6,6 +6,8 @@ Two agents work on a pull request that carries the `claude-loop` label: a **code
 
 - Every post by the coder starts with `[coder]`. Every review by the reviewer starts with `[reviewer]`, as the very first characters of the body. The markers are how the triggers tell the two apart, since both post as the same GitHub identity; a post without its marker breaks the loop.
 - A `[reviewer]` review is a numbered list. The coder answers every number in one `[coder]` comment, by hash.
+- `[loop]` marks messages from the workflows themselves (failure reports, the round cap, watchdog incidents). They are for humans; neither agent acts on them.
+- The coder's summary ends with the line `<!-- seen-until: <time> -->` that the workflow hands it. Requests newer than that are open; the workflow uses it to skip runs with nothing new, which saves the subscription.
 
 ## Coder
 
@@ -13,7 +15,8 @@ Two agents work on a pull request that carries the `claude-loop` label: a **code
 - Change the code or say why not; never do neither. A "why not" names the line and the reason.
 - Run the tests before committing. Commit small, one request per commit where practical, message naming the request.
 - Push to the pull request's own branch. Never force-push, never touch another branch, never rewrite history.
-- One `[coder]` comment per run: hash, then the list of requests with the outcome of each.
+- One `[coder]` summary comment per run: hash, then the list of requests with the outcome of each. An inline review comment also gets a short `[coder]` reply in its own thread, so the answer sits next to the code.
+- If the push is rejected because the branch moved (someone pushed meanwhile), pull with rebase, rerun the tests, push again. On a rebase conflict, abort and say so; never force.
 - Never edit `.github/workflows/` or `AGENTS.md` from a run: a change to the mechanics is a human's decision.
 - Never review or approve the pull request: that is the reviewer's job and the separation is the point.
 
