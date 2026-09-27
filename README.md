@@ -136,7 +136,11 @@ race on a freshly labelled PR. The job's `if:` gate decides before the action st
 - posts whose body contains `[coder]` never trigger it (its own replies);
 - a bot actor triggers it only when the body carries `[reviewer]` or the actor is Copilot; humans always do;
 - inline review comments count only from humans, so one Copilot review fires one run, not one per inline comment;
-- an approving review never triggers it.
+- an approving review never triggers it;
+- a human-authored event counts only when its author is a repository owner, a member of the organisation or a
+  collaborator (`author_association`), so comments from strangers on a public repository never start a job. Labels need
+  triage permission anyway, and fork PRs get no secrets, so outsiders cannot spend the subscription; team members can trigger
+  as often as they like.
 
 Inside the action, `allowed_bots: "claude[bot],copilot-pull-request-reviewer[bot]"` lets those two bots through the
 action's own human-actor check (which otherwise rejects every bot to prevent loops). A step before the action counts
@@ -169,6 +173,15 @@ been superseded by a newer push.
    reusable workflow (`on: workflow_call`) and give each repository a ten-line caller with the same `on:` block and
    `uses: <org>/claude-loop/.github/workflows/pr-loop.yml@main` plus `secrets: inherit`. Changing the procedure then changes
    it everywhere at once.
+
+## Two GitHub details the workflows work around
+
+- **Commit attribution.** The action's default `bot_id` is the user ID of `github-actions[bot]`, so a commit the coder
+  makes is attributed to that account, and GitHub holds the workflow run that push triggers for manual approval: the
+  reviewer's run shows `action_required` in the Actions tab and nothing happens until someone clicks "Approve and run".
+  Both workflows therefore set `bot_id: "209825114"` and `bot_name: "claude[bot]"`, the Claude GitHub App's own bot
+  user, so the coder's pushes are attributed to `claude[bot]` and trigger the reviewer like any other push.
+- **Workflow identity on `pull_request` events.** See the next section.
 
 ## The one rule about workflow changes
 

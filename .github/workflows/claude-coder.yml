@@ -26,17 +26,22 @@ jobs:
     # the reviewer agent's review (`[reviewer]` marker, not an approval) or Copilot's review; the coder's own
     # `[coder]` posts never re-trigger it; inline review comments count only from humans (Copilot's arrive as
     # part of its review event, which already fires once). Markers are tested with startsWith, not contains: a
-    # review that quotes "[coder]" in its text (the reviewer's did) must still trigger the coder.
+    # review that quotes "[coder]" in its text (the reviewer's did) must still trigger the coder. Human-authored
+    # events count only from repository owners, organisation members and collaborators (author_association), so a
+    # stranger's comment on a public repository never starts a job; the action would refuse it anyway (write access
+    # check), but this saves the runner minute too.
     if: |
       (github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.issue.labels.*.name, 'claude-loop')
         && !startsWith(github.event.comment.body, '[coder]')
-        && (!endsWith(github.actor, '[bot]') || startsWith(github.event.comment.body, '[reviewer]'))) ||
+        && ((!endsWith(github.actor, '[bot]') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+            || startsWith(github.event.comment.body, '[reviewer]'))) ||
       (github.event_name == 'pull_request_review_comment' && contains(github.event.pull_request.labels.*.name, 'claude-loop')
-        && !endsWith(github.actor, '[bot]')) ||
+        && !endsWith(github.actor, '[bot]') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
       (github.event_name == 'pull_request_review' && contains(github.event.pull_request.labels.*.name, 'claude-loop')
         && github.event.review.state != 'approved'
         && !startsWith(github.event.review.body, '[coder]')
-        && (!endsWith(github.actor, '[bot]') || startsWith(github.event.review.body, '[reviewer]') || github.actor == 'copilot-pull-request-reviewer[bot]'))
+        && ((!endsWith(github.actor, '[bot]') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association))
+            || startsWith(github.event.review.body, '[reviewer]') || github.actor == 'copilot-pull-request-reviewer[bot]'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -84,6 +89,12 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # The action's default bot_id (41898282) is github-actions[bot]'s user ID, so commits it makes are attributed
+          # to that account and GitHub holds the workflow runs they trigger for manual approval ("action_required").
+          # 209825114 is the Claude GitHub App's own bot user, claude[bot]; with it, the coder's pushes trigger the
+          # reviewer like any other push.
+          bot_id: "209825114"
+          bot_name: "claude[bot]"
           allowed_bots: "claude[bot],copilot-pull-request-reviewer[bot]"
           prompt: |
             You are the coding agent for pull request #${{ env.PR }} in ${{ github.repository }}.
