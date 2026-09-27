@@ -112,8 +112,10 @@ jobs:
             1. Read the pull request (`gh pr view ${{ env.PR }} --comments`, `gh pr diff ${{ env.PR }}`) and the review
                threads (`gh api repos/${{ github.repository }}/pulls/${{ env.PR }}/comments`, `.../reviews`) and collect every
                request that has no `[coder]` reply yet. A `[reviewer]` review is a numbered list; treat every item as a request.
-            2. For each request decide: change the code, or answer with a reason. Make the changes on the checked-out PR
-               branch, run `python -m pytest -q`, and commit with a message that names the request it answers.
+            2. For each request decide: change the code, or answer with a reason. A team member's instruction settles a
+               design question; when it contradicts an argument made earlier in the thread, say so in one sentence,
+               then do it. Make the changes on the checked-out PR branch, run `python -m pytest -q`, and commit with a
+               message that names the request it answers.
             3. Push with `git push origin HEAD`.
             4. Reply once on the PR with `gh pr comment ${{ env.PR }} --body "..."`. The body must start with `[coder]`, name
                the commit hash, and list each request with what was done or why not. Reply on inline threads only

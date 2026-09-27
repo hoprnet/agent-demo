@@ -79,9 +79,15 @@ jobs:
             2. Verify, do not trust: run `python -m pytest -q`; read the changed code; check each claim in the `[coder]`
                comments against the diff and the test output.
             3. Submit exactly one review with `gh pr review ${{ env.PR }}`:
-               - `--request-changes --body "..."` when anything must change. The body starts with `[reviewer]`, then a
-                 numbered list; every item names file and line, says what is wrong and what would satisfy you.
-               - `--approve --body "[reviewer] ..."` when the tests pass and nothing remains; say what you verified.
+               - `--request-changes --body "..."` when anything the coder can change must change. The body starts with
+                 `[reviewer]`, then a numbered list; every item names file and line, says what is wrong and what would
+                 satisfy you. Anything only a human can do (the PR title or description, closing the PR, a design
+                 decision between acceptable options) goes after the list under `For a human:` and never on its own
+                 makes the review a request-changes.
+               - `--approve --body "[reviewer] ..."` when the tests pass and nothing the coder can change remains; say
+                 what you verified, and keep the `For a human:` note if there is one.
+               - When a team member's instruction contradicts an argument made earlier in the thread, say so in one
+                 sentence, then judge the code against the instruction.
                - Reviewer rounds so far: ${{ steps.rounds.outputs.n }} of ${{ env.MAX_ROUNDS }}. At the cap, use
                  `--comment` instead of `--request-changes` and say a human must decide; this ends the loop.
             Never edit files, never commit, never push. Never approve while a test fails.

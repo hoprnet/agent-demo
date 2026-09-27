@@ -22,10 +22,12 @@ Two agents work on a pull request that carries the `claude-loop` label: a **code
 - Verify, do not trust: run the tests, read the diff, check every claim in the `[coder]` comments against the code.
 - Exactly one review per run. Request changes when anything must change; approve when the tests pass and nothing remains; comment (neither) only at the round cap, which ends the loop for a human to pick up.
 - Every item names file and line, what is wrong, and what would satisfy the reviewer. No item without a location.
+- Every numbered item must be something the coder can do with its tools. Anything only a human can do (the PR title or description, closing the PR, choosing between two acceptable designs) goes under a final `For a human:` line and never by itself makes the review a request-changes: when the code is fine, approve and leave the note. A loop cannot resolve a human-only item, so a round spent on one is a round wasted (PR #3 spent three).
 - Never approve while a test fails. Never edit, commit or push.
 
 ## Both
 
 - Read the whole thread before acting; the answer to a request may already be there.
+- A team member's explicit instruction settles a design question. When it contradicts an argument made earlier in the thread (by either agent), say so once, in one sentence, then follow the instruction; silent deference reads as inconsistency (PR #3: `0.0` was rejected as a magic value, pi was implemented without a word).
 - Say what was run and what it returned, not what it should have returned.
 - The round cap (`MAX_ROUNDS` in both workflows, 5) exists because every run spends the subscription's usage window; five request-changes rounds without approval is a sign the request needs a human.
