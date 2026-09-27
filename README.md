@@ -85,23 +85,32 @@ Optional: add a `CLAUDE.md` with project conventions; the action reads it, as it
 
 ## Run the proof of concept
 
-1. Branch, break something, open a pull request:
+Nothing here needs `gh`: `git` over your SSH key and the GitHub web pages are enough. Where a `gh` one-liner exists it is
+given as an aside for people who are logged in.
+
+1. **Branch, break something, push.**
    ```bash
    git checkout -b poc/mean-bug
    sed -i 's|return sum(values) / len(values)|return sum(values) / (len(values) + 1)|' demo/calc.py
-   git commit -am "poc: introduce an off-by-one in mean()" && git push -u origin poc/mean-bug
-   gh pr create --fill --repo hoprnet/agent-demo    # or open the pull request from the branch banner on github.com
+   git commit -am "poc: introduce an off-by-one in mean()"
+   git push -u origin poc/mean-bug
    ```
-2. **Follow the PR:** add the label, either from the Labels gear in the pull request's sidebar or with
-   `gh pr edit <number> --add-label claude-loop` (needs `gh` authenticated or the scoped `GH_TOKEN` from the setup steps).
-   Adding the label fires both workflows once: the reviewer runs the tests, finds `test_mean` failing and requests changes
-   with a numbered item naming `demo/calc.py`; that review fires the coder, which fixes the line, pushes, and replies
-   `[coder] <hash> …`; the push fires the reviewer again, which approves. Expect three or four runs and a few minutes each.
-3. Try the other entry point: comment on the PR, for example "add a `subtract(a, b)` with a test". The coder acts on it,
-   the reviewer checks the push. Anyone with write access can do this; no `@claude` mention is needed on a labelled PR.
-4. Watch under the repository's **Actions** tab (`claude-coder`, `claude-reviewer`) and in the PR's timeline.
-5. **Stop following:** remove the label, from the sidebar or with `gh pr edit <number> --remove-label claude-loop`.
-   Nothing runs on the PR after that.
+2. **Open the pull request** on the web: go to https://github.com/hoprnet/agent-demo/compare/poc/mean-bug?expand=1 (the
+   repository page also shows a "Compare & pull request" banner for the branch you just pushed), keep `main` as the base,
+   and create it. (`gh pr create --fill --repo hoprnet/agent-demo` does the same.)
+3. **Follow the PR:** on the pull request page, click the gear next to **Labels** in the right-hand sidebar and pick
+   `claude-loop` (or type the name and choose "Create new label" if it does not exist yet). (`gh pr edit <number>
+   --add-label claude-loop`.) Adding the label fires both workflows once: the reviewer runs the tests, finds `test_mean`
+   failing and requests changes with a numbered item naming `demo/calc.py`; that review fires the coder, which fixes the
+   line, pushes, and replies `[coder] <hash> …`; the push fires the reviewer again, which approves. Expect three or four runs
+   of a few minutes each.
+4. **Try the other entry point:** in the pull request's conversation, write a comment such as "add a `subtract(a, b)`
+   with a test" and post it. The coder acts on it, the reviewer checks the push. Anyone with write access to the repository
+   can do this; no `@claude` mention is needed on a labelled PR.
+5. **Watch** under the repository's **Actions** tab (workflows `claude-coder` and `claude-reviewer`; each run's log shows
+   what Claude read and ran) and in the pull request's timeline, where the `[coder]` comments and `[reviewer]` reviews land.
+6. **Stop following:** remove the label from the same sidebar gear (`gh pr edit <number> --remove-label claude-loop`).
+   Nothing runs on the PR after that. Re-adding it starts a new round, which is also how you continue after the round cap.
 
 ## Follow a new pull request
 
