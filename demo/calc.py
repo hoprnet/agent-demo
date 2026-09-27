@@ -15,3 +15,9 @@ def mean(values: list[float]) -> float:
     if not values:
         raise ValueError("mean of an empty list")
     return sum(values) / len(values)
+
+
+def variance(values: list[float]) -> float:
+    """Sample variance (divides by n - 1). Raises ValueError for fewer than two values."""
+    m = mean(values)
+    return sum((v - m) ** 2 for v in values) / len(values)

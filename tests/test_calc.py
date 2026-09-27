@@ -18,3 +18,7 @@ def test_mean():
     assert calc.mean([1, 2, 3]) == 2
     with pytest.raises(ValueError):
         calc.mean([])
+
+
+def test_variance():
+    assert calc.variance([2, 4, 4, 4, 5, 5, 7, 9]) == 4
