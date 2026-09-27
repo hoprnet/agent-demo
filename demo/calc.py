@@ -19,5 +19,7 @@ def mean(values: list[float]) -> float:
 
 def variance(values: list[float]) -> float:
     """Sample variance (divides by n - 1). Raises ValueError for fewer than two values."""
+    if len(values) < 2:
+        raise ValueError("variance needs at least two values")
     m = mean(values)
     return sum((v - m) ** 2 for v in values) / len(values)
