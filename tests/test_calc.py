@@ -23,5 +23,6 @@ def test_mean():
 def test_median():
     assert calc.median([3, 1, 2]) == 2
     assert calc.median([5]) == 5
+    assert calc.median([1, 2, 3, 4]) == 2.5
     with pytest.raises(ValueError):
         calc.median([])

@@ -23,4 +23,6 @@ def median(values: list[float]) -> float:
         raise ValueError("median of an empty list")
     ordered = sorted(values)
     mid = len(ordered) // 2
+    if len(ordered) % 2 == 0:
+        return (ordered[mid - 1] + ordered[mid]) / 2
     return ordered[mid]
