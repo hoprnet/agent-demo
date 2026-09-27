@@ -136,7 +136,11 @@ race on a freshly labelled PR. The job's `if:` gate decides before the action st
 - posts whose body contains `[coder]` never trigger it (its own replies);
 - a bot actor triggers it only when the body carries `[reviewer]` or the actor is Copilot; humans always do;
 - inline review comments count only from humans, so one Copilot review fires one run, not one per inline comment;
-- an approving review never triggers it.
+- an approving review never triggers it;
+- a human-authored event counts only when its author is a repository owner, a member of the organisation or a
+  collaborator (`author_association`), so comments from strangers on a public repository never start a job. Labels need
+  triage permission anyway, and fork PRs get no secrets, so outsiders cannot spend the subscription; team members can trigger
+  as often as they like.
 
 Inside the action, `allowed_bots: "claude[bot],copilot-pull-request-reviewer[bot]"` lets those two bots through the
 action's own human-actor check (which otherwise rejects every bot to prevent loops). A step before the action counts
