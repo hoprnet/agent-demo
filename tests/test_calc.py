@@ -21,7 +21,7 @@ def test_mean():
 
 
 def test_variance():
-    assert calc.variance([2, 4, 4, 4, 5, 5, 7, 9]) == 4
+    assert calc.variance([2, 4, 4, 4, 5, 5, 7, 9]) == pytest.approx(32 / 7)
     with pytest.raises(ValueError):
         calc.variance([])
     with pytest.raises(ValueError):

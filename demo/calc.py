@@ -22,4 +22,4 @@ def variance(values: list[float]) -> float:
     if len(values) < 2:
         raise ValueError("variance needs at least two values")
     m = mean(values)
-    return sum((v - m) ** 2 for v in values) / len(values)
+    return sum((v - m) ** 2 for v in values) / (len(values) - 1)
