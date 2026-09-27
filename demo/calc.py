@@ -14,4 +14,4 @@ def mean(values: list[float]) -> float:
     """Arithmetic mean; raises ValueError on an empty list."""
     if not values:
         raise ValueError("mean of an empty list")
-    return sum(values) / (len(values) + 1)
+    return sum(values) / len(values)
