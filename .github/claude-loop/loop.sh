@@ -24,6 +24,8 @@ ghx() {
   for i in 1 2 3; do
     if out=$(timeout 60 gh "$@" 2>&1); then printf '%s' "$out"; return 0; else rc=$?; fi
     log "gh $1 ${2:-} failed (attempt $i, rc $rc): ${out:0:200}"
+    # a client error other than 429 will not change on retry (not found, conflict, forbidden, invalid)
+    if grep -qE 'HTTP 4[0-9][0-9]' <<<"$out" && ! grep -q 'HTTP 429' <<<"$out"; then return "$rc"; fi
     sleep $((i * 5))
   done
   return "$rc"
@@ -98,14 +100,18 @@ coder_requests() {
 
 # exit 0 and print the open requests when there is work, exit 10 when there is none
 coder_precheck() {
-  local reqs n; reqs=$(coder_requests "$1"); n=$(jq length <<<"$reqs")
+  local reqs n state; state=$(ghx api "repos/$R/pulls/$1" --jq '.state')
+  if [ "$state" != "open" ]; then log "PR #$1 is $state; the loop only works on open pull requests"; return 10; fi
+  reqs=$(coder_requests "$1"); n=$(jq length <<<"$reqs")
   if [ "$n" -eq 0 ]; then log "nothing new for the coder on PR #$1"; return 10; fi
   jq -c '.[]' <<<"$reqs"
 }
 
 # exit 10 when the reviewer already reviewed this head since the label was added
 reviewer_precheck() {
-  local pr=$1 sha=$2 since done_
+  local pr=$1 sha=$2 since done_ state
+  state=$(ghx api "repos/$R/pulls/$pr" --jq '.state')
+  if [ "$state" != "open" ]; then log "PR #$pr is $state; the loop only works on open pull requests"; return 10; fi
   since=$(label_time "$pr")
   done_=$(list "repos/$R/pulls/$pr/reviews" | jq --arg b "$BOT" --arg s "$sha" --arg t "$since" \
     '[.[] | select(.user.login == $b and (.body | startswith("[reviewer]")) and .commit_id == $s and .submitted_at > $t)] | length')
@@ -145,11 +151,14 @@ after_review() {
   esac
 }
 
-# Cancel reviewer runs GitHub is holding for approval (pushes from workflows are attributed to github-actions[bot]).
+# Delete the reviewer runs GitHub holds for approval: a push made from inside a workflow is attributed to
+# github-actions[bot], and GitHub parks the pull_request run it triggers as "completed / action_required". Such a
+# run cannot be cancelled (it is already completed), it shows on the PR as a check waiting for approval, and the
+# chained review already covered its commit, so it is deleted.
 cancel_held() {
   local ids; ids=$(ghx api "repos/$R/actions/runs?status=action_required&per_page=50" \
-    --jq '.workflow_runs[] | select(.name == "claude-reviewer") | .id' || true)
-  for id in $ids; do ghx api -X POST "repos/$R/actions/runs/$id/cancel" > /dev/null && log "cancelled held run $id" || true; done
+    --jq '.workflow_runs[] | select(.name == "claude-reviewer" and .actor.login == "github-actions[bot]") | .id' || true)
+  for id in $ids; do ghx api -X DELETE "repos/$R/actions/runs/$id" > /dev/null && log "deleted held run $id" || log "could not delete held run $id"; done
 }
 
 # Classify a failure from log text on stdin: prints "headline|hint"

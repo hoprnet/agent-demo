@@ -29,18 +29,18 @@ jobs:
     concurrency:
       group: claude-coder-${{ github.event.pull_request.number || github.event.issue.number }}
       cancel-in-progress: false
-    # The gate, evaluated before a runner starts. Every branch needs the label. Human events count only from
+    # The gate, evaluated before a runner starts. Every branch needs an open PR with the label. Human events count only from
     # owners, organisation members and collaborators. Bot events pass only for the reviewer agent's review
     # (`[reviewer]` at the start of the body, not an approval) and Copilot's review; the coder's own `[coder]`
     # posts never re-trigger it, and inline comments count only from humans (Copilot's review fires once).
     if: |
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.issue.labels.*.name, 'claude-loop')
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.issue.state == 'open' && contains(github.event.issue.labels.*.name, 'claude-loop')
         && !startsWith(github.event.comment.body, '[coder]')
         && ((!endsWith(github.actor, '[bot]') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
             || startsWith(github.event.comment.body, '[reviewer]'))) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.pull_request.labels.*.name, 'claude-loop')
+      (github.event_name == 'pull_request_review_comment' && github.event.pull_request.state == 'open' && contains(github.event.pull_request.labels.*.name, 'claude-loop')
         && !endsWith(github.actor, '[bot]') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
-      (github.event_name == 'pull_request_review' && contains(github.event.pull_request.labels.*.name, 'claude-loop')
+      (github.event_name == 'pull_request_review' && github.event.pull_request.state == 'open' && contains(github.event.pull_request.labels.*.name, 'claude-loop')
         && github.event.review.state != 'approved'
         && !startsWith(github.event.review.body, '[coder]')
         && ((!endsWith(github.actor, '[bot]') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association))
