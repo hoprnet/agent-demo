@@ -108,6 +108,8 @@ given as an aside for people who are logged in.
    can do this; no `@claude` mention is needed on a labelled PR.
 5. **Watch** under the repository's **Actions** tab (workflows `claude-coder` and `claude-reviewer`; each run's log shows
    what Claude read and ran) and in the pull request's timeline, where the `[coder]` comments and `[reviewer]` reviews land.
+   If a run finishes in seconds with nothing posted, the PR branch's workflow files differ from `main`'s; see "The one
+   rule about workflow changes" below.
 6. **Stop following:** remove the label from the same sidebar gear (`gh pr edit <number> --remove-label claude-loop`).
    Nothing runs on the PR after that. Re-adding it starts a new round, which is also how you continue after the round cap.
 
@@ -167,6 +169,19 @@ been superseded by a newer push.
    reusable workflow (`on: workflow_call`) and give each repository a ten-line caller with the same `on:` block and
    `uses: <org>/claude-loop/.github/workflows/pr-loop.yml@main` plus `secrets: inherit`. Changing the procedure then changes
    it everywhere at once.
+
+## The one rule about workflow changes
+
+On `pull_request` events (the reviewer's trigger, and the label event) GitHub runs the workflow file as it is on the
+**PR branch**, and the Claude Code GitHub Action then refuses to start unless that file is byte-identical to the copy on
+the default branch. The run still shows green, with "Skipping action due to workflow validation" in the step log, and
+nothing happens. Two consequences:
+
+- A PR branch created before a change to `.github/workflows/` must be brought up to date before the loop works on it:
+  `git checkout <branch> && git merge main && git push`, then remove and re-add the label.
+- A PR that itself edits the workflow files never runs the agents on `pull_request` events; the coder's comment triggers
+  use the default branch's copy and keep working. Change the workflows on `main` (or a PR whose only purpose is that
+  change), not inside a PR the agents are meant to work on. AGENTS.md already forbids the coder to touch them.
 
 ## Cost and limits
 
