@@ -107,15 +107,23 @@ coder_precheck() {
   jq -c '.[]' <<<"$reqs"
 }
 
-# exit 10 when the reviewer already reviewed this head since the label was added
+# The reviewer's outcome for one commit, from the claude-loop status history of that exact commit (review
+# objects cannot answer this: GitHub reports an approval's commit_id as the current head once commits are added).
+# Prints the latest outcome description recorded since the label was added, or nothing.
+OUTCOME_RE='^(approved by the reviewer|changes requested|round cap reached)'
+reviewed_outcome() {
+  local pr=$1 sha=$2 since; since=$(label_time "$pr")
+  ghx api "repos/$R/commits/$sha/statuses?per_page=100" | jq -r --arg c "$CONTEXT" --arg s "$since" --arg re "$OUTCOME_RE" \
+    '[.[] | select(.context == $c and .created_at > $s and (.description | test($re)))] | sort_by(.created_at) | last | .description // ""'
+}
+
+# exit 10 when the reviewer already reviewed this exact head since the label was added, or the PR is not open
 reviewer_precheck() {
-  local pr=$1 sha=$2 since done_ state
+  local pr=$1 sha=$2 state outcome
   state=$(ghx api "repos/$R/pulls/$pr" --jq '.state')
   if [ "$state" != "open" ]; then log "PR #$pr is $state; the loop only works on open pull requests"; return 10; fi
-  since=$(label_time "$pr")
-  done_=$(list "repos/$R/pulls/$pr/reviews" | jq --arg b "$BOT" --arg s "$sha" --arg t "$since" \
-    '[.[] | select(.user.login == $b and (.body | startswith("[reviewer]")) and .commit_id == $s and .submitted_at > $t)] | length')
-  if [ "$done_" -gt 0 ]; then log "head $sha of PR #$pr already reviewed since the label"; return 10; fi
+  outcome=$(reviewed_outcome "$pr" "$sha")
+  if [ -n "$outcome" ]; then log "head ${sha:0:7} of PR #$pr already reviewed since the label: $outcome"; return 10; fi
 }
 
 # postconditions: the agent must have posted in this run
@@ -128,26 +136,25 @@ reviewer_state() {
     '[.[] | select(.user.login == $b and (.body | startswith("[reviewer]")) and .submitted_at >= $s)] | last | .state // ""'
 }
 
-# Settle the status after a run that did not push: approved head -> green, otherwise waiting.
+# Settle the status after a coder run that did not push: the head's recorded review outcome, or waiting.
 settle() {
-  local pr=$1 sha state
-  sha=$(head_sha "$pr")
-  state=$(list "repos/$R/pulls/$pr/reviews" | jq -r --arg b "$BOT" --arg s "$sha" \
-    '[.[] | select(.user.login == $b and (.body | startswith("[reviewer]")) and .commit_id == $s)] | last | .state // ""')
-  case "$state" in
-    APPROVED) status "$pr" success "approved by the reviewer" "$sha"; clear_error "$pr" ;;
-    CHANGES_REQUESTED) status "$pr" pending "changes requested; waiting for the coder or a human" "$sha" ;;
-    *) status "$pr" pending "waiting for the reviewer or a human" "$sha" ;;
+  local pr=$1 sha outcome
+  sha=$(head_sha "$pr"); outcome=$(reviewed_outcome "$pr" "$sha")
+  case "$outcome" in
+    approved*) status "$pr" success "approved by the reviewer" "$sha"; clear_error "$pr" ;;
+    "changes requested"*) status "$pr" pending "changes requested; waiting for the coder or a human" "$sha" ;;
+    "round cap"*) status "$pr" failure "round cap reached; a human decides" "$sha" ;;
+    *) status "$pr" pending "waiting for the reviewer (head ${sha:0:7} not reviewed yet)" "$sha" ;;
   esac
 }
 
-# After a review: status from the review state. after_review PR STATE ROUNDS MAX
+# After a review, record its outcome on the reviewed commit. after_review PR STATE ROUNDS MAX SHA
 after_review() {
-  local pr=$1 st=$2 n=$3 max=$4
+  local pr=$1 st=$2 n=$3 max=$4 sha=$5
   case "$st" in
-    APPROVED) status "$pr" success "approved by the reviewer"; clear_error "$pr" ;;
-    CHANGES_REQUESTED) status "$pr" pending "changes requested (round $((n + 1)) of $max); coder is next" ;;
-    COMMENTED) status "$pr" failure "round cap reached ($max); a human decides"; mark_error "$pr" ;;
+    APPROVED) status "$pr" success "approved by the reviewer" "$sha"; clear_error "$pr" ;;
+    CHANGES_REQUESTED) status "$pr" pending "changes requested (round $((n + 1)) of $max); coder is next" "$sha" ;;
+    COMMENTED) status "$pr" failure "round cap reached ($max); a human decides" "$sha"; mark_error "$pr" ;;
   esac
 }
 
@@ -289,6 +296,7 @@ case "$cmd" in
   coder-requests) coder_requests "$@" ;;
   coder-precheck) coder_precheck "$@" ;;
   reviewer-precheck) reviewer_precheck "$@" ;;
+  reviewed-outcome) reviewed_outcome "$@" ;;
   coder-posted) coder_posted "$@" ;;
   reviewer-state) reviewer_state "$@" ;;
   settle) settle "$@" ;;
