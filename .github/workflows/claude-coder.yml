@@ -1,0 +1,99 @@
+# The coding agent. Runs when something lands on a pull request that carries the `claude-loop` label:
+# a human comment, a human inline review comment, a submitted review from a human, from Copilot, or from
+# the reviewer agent (marked `[reviewer]`), or the moment the label is added. It fixes code on the PR
+# branch, pushes, and replies on the PR with a `[coder]` comment. See README.md and AGENTS.md.
+name: claude-coder
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  pull_request:
+    types: [labeled]
+
+concurrency:
+  group: claude-coder-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  coder:
+    # Gate before the action runs. Every branch requires the label. Bot-authored events pass only when they are
+    # the reviewer agent's review (`[reviewer]` marker, not an approval) or Copilot's review; the coder's own
+    # `[coder]` posts never re-trigger it; inline review comments count only from humans (Copilot's arrive as
+    # part of its review event, which already fires once).
+    if: |
+      (github.event_name == 'pull_request' && github.event.label.name == 'claude-loop') ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.issue.labels.*.name, 'claude-loop')
+        && !contains(github.event.comment.body, '[coder]')
+        && (!endsWith(github.actor, '[bot]') || contains(github.event.comment.body, '[reviewer]'))) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.pull_request.labels.*.name, 'claude-loop')
+        && !endsWith(github.actor, '[bot]')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.pull_request.labels.*.name, 'claude-loop')
+        && github.event.review.state != 'approved'
+        && !contains(github.event.review.body, '[coder]')
+        && (!endsWith(github.actor, '[bot]') || contains(github.event.review.body, '[reviewer]') || github.actor == 'copilot-pull-request-reviewer[bot]'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    env:
+      PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+      MAX_ROUNDS: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check out the PR branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr checkout "$PR"
+
+      - name: Count reviewer rounds
+        id: rounds
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          n=$(gh api "repos/${{ github.repository }}/pulls/$PR/reviews" --paginate \
+                --jq '[.[] | select(.state == "CHANGES_REQUESTED") | select(.body | startswith("[reviewer]"))] | length')
+          echo "n=$n" >> "$GITHUB_OUTPUT"
+          echo "reviewer rounds so far: $n"
+
+      - name: Stop at the round cap
+        if: fromJSON(steps.rounds.outputs.n) >= fromJSON(env.MAX_ROUNDS)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment "$PR" --body "[coder] ${{ steps.rounds.outputs.n }} review rounds reached the cap of $MAX_ROUNDS; a human decides what happens next. Remove and re-add the \`claude-loop\` label to continue."
+          echo "cap reached" && exit 0
+
+      - name: Run the coding agent
+        if: fromJSON(steps.rounds.outputs.n) < fromJSON(env.MAX_ROUNDS)
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          allowed_bots: "claude[bot],copilot-pull-request-reviewer[bot]"
+          prompt: |
+            You are the coding agent for pull request #${{ env.PR }} in ${{ github.repository }}.
+            Event: ${{ github.event_name }} by ${{ github.actor }}.
+            Read AGENTS.md first and follow it. Then:
+            1. Read the pull request (`gh pr view ${{ env.PR }} --comments`, `gh pr diff ${{ env.PR }}`) and the review
+               threads (`gh api repos/${{ github.repository }}/pulls/${{ env.PR }}/comments`, `.../reviews`) and collect every
+               request that has no `[coder]` reply yet. A `[reviewer]` review is a numbered list; treat every item as a request.
+            2. For each request decide: change the code, or answer with a reason. Make the changes on the checked-out PR
+               branch, run `python -m pytest -q`, and commit with a message that names the request it answers.
+            3. Push with `git push origin HEAD`.
+            4. Reply once on the PR with `gh pr comment ${{ env.PR }} --body "..."`. The body must start with `[coder]`, name
+               the commit hash, and list each request with what was done or why not. Reply on inline threads only
+               through that summary; do not open new review threads.
+            If nothing needs a change, still post one `[coder]` comment saying so and why.
+            Never edit .github/workflows or AGENTS.md. Never force-push. Never approve or review the PR yourself.
+          claude_args: |
+            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(python -m pytest:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git push origin HEAD),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh api repos/*/pulls/*/comments),Bash(gh api repos/*/pulls/*/reviews)"
+            --max-turns 40
