@@ -1,5 +1,7 @@
-# The review agent. Runs on every push to a pull request that carries the `claude-loop` label, and once when
-# the label is added. It reads the new commits, runs the tests, checks the coder's claims, and submits ONE
+# The review agent. Runs when the `claude-loop` label is added, on every human push to a labelled pull request,
+# and, through workflow_call, as the second job of the coder's run right after the coder pushed (GitHub holds
+# runs that a workflow's own push triggers for manual approval, so the coder's pushes cannot wake the reviewer
+# through an event). It reads the new commits, runs the tests, checks the coder's claims, and submits ONE
 # pull request review marked `[reviewer]`: "request changes" with a numbered list, or "approve". It never
 # edits or pushes. A "request changes" review triggers the coder; an approval ends the loop.
 name: claude-reviewer
@@ -12,13 +14,20 @@ on:
       pr:
         description: pull request number
         required: true
+  workflow_call:
+    inputs:
+      pr:
+        description: pull request number
+        required: true
+        type: string
 
 jobs:
   reviewer:
     concurrency:
       group: claude-reviewer-${{ github.event.pull_request.number || inputs.pr }}
       cancel-in-progress: true
-    if: github.event_name == 'workflow_dispatch' || (contains(github.event.pull_request.labels.*.name, 'claude-loop') && (github.event.action == 'synchronize' || github.event.label.name == 'claude-loop'))
+    # inputs.pr is set by workflow_dispatch and by the coder's workflow_call; the pull_request branch needs the label
+    if: inputs.pr != '' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'claude-loop') && (github.event.action == 'synchronize' || github.event.label.name == 'claude-loop'))
     runs-on: ubuntu-latest
     permissions:
       contents: read

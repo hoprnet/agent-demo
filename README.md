@@ -19,7 +19,7 @@ label `claude-loop` added, or any push to the PR branch
         │  request changes ──► coder            approve ──► loop ends
         ▼
   claude-coder.yml ── fixes on the PR branch, pushes, replies "[coder] <hash> …"
-        │  the push is a pull_request: synchronize event ──► reviewer again
+        │  same run, second job: the reviewer workflow is called ──► reviewer again
         ▼
   after MAX_ROUNDS (5) request-changes rounds both stop and leave it to a human
 
@@ -103,7 +103,7 @@ Inside the action, `allowed_bots: "claude[bot],copilot-pull-request-reviewer[bot
 
 ## How the reviewer trigger works
 
-`.github/workflows/claude-reviewer.yml` listens to `pull_request: synchronize` (every push to the PR branch, including the coder's) and `labeled`, plus `workflow_dispatch` for a manual run by PR number. Pushes by the coder arrive as `claude[bot]`, hence `allowed_bots: "claude[bot]"`. Both workflows install `pytest` first (the GitHub runner image has python but not pytest). The reviewer checks out the PR head, has read-only tools plus `python -m pytest` and `gh pr review`, and must post exactly one review: request changes with a numbered list, approve, or, at the round cap, a plain comment that ends the loop. `cancel-in-progress: true` drops a review of a commit that has already been superseded by a newer push.
+`.github/workflows/claude-reviewer.yml` listens to `pull_request: synchronize` (a push to the PR branch) and `labeled`, plus `workflow_dispatch` for a manual run by PR number, and it is callable (`workflow_call`) so the coder's run can chain it after a push. Pushes by the coder arrive as `claude[bot]`, hence `allowed_bots: "claude[bot]"`. Both workflows install `pytest` first (the GitHub runner image has python but not pytest). The reviewer checks out the PR head, has read-only tools plus `python -m pytest` and `gh pr review`, and must post exactly one review: request changes with a numbered list, approve, or, at the round cap, a plain comment that ends the loop. `cancel-in-progress: true` drops a review of a commit that has already been superseded by a newer push.
 
 ## Migrate to another repository
 
@@ -115,7 +115,7 @@ Inside the action, `allowed_bots: "claude[bot],copilot-pull-request-reviewer[bot
 
 ## Two GitHub details the workflows work around
 
-- **Commit attribution.** The action's default `bot_id` is the user ID of `github-actions[bot]`, so a commit the coder makes is attributed to that account, and GitHub holds the workflow run that push triggers for manual approval: the reviewer's run shows `action_required` in the Actions tab and nothing happens until someone clicks "Approve and run". Both workflows therefore set `bot_id: "209825114"` and `bot_name: "claude[bot]"`, the Claude GitHub App's own bot user, so the coder's pushes are attributed to `claude[bot]` and trigger the reviewer like any other push.
+- **A workflow's own push cannot wake another workflow.** GitHub attributes a push made from inside a workflow run to `github-actions[bot]`, whatever token the action used and however the commit is authored, and holds the `pull_request` run that push would trigger for manual approval (`action_required` in the Actions tab, until someone clicks "Approve and run"). So the coder's pushes never reach the reviewer through an event. Instead the coder workflow runs the reviewer as a second job of the same run (`workflow_call` into `claude-reviewer.yml`), only when the coder actually pushed. The standalone reviewer workflow still covers the label event and human pushes. A held duplicate run may still appear after a coder push; it can be ignored or approved, it reviews the same commit. Both workflows also set `bot_id: "209825114"` and `bot_name: "claude[bot]"`, the Claude GitHub App's own bot user, so the coder's commits are at least attributed to `claude[bot]` rather than to `github-actions[bot]`.
 - **Workflow identity on `pull_request` events.** On these events (the reviewer's triggers) GitHub runs the workflow file as it is on the **PR branch**, and the Claude Code GitHub Action then refuses to start unless that file is byte-identical to the copy on the default branch. The run still shows green, with "Skipping action due to workflow validation" in the step log, and nothing happens. Two consequences:
   - A PR branch created before a change to `.github/workflows/` must be brought up to date before the loop works on it: `git checkout <branch> && git pull && git merge main && git push`. The push itself fires the reviewer.
   - A PR that itself edits the workflow files never runs the agents on `pull_request` events; the coder's comment triggers use the default branch's copy and keep working. Change the workflows on `main` (or a PR whose only purpose is that change), not inside a PR the agents are meant to work on. AGENTS.md already forbids the coder to touch them.
