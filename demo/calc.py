@@ -1,5 +1,7 @@
 """A small module the proof-of-concept pull requests change. Keep it small: the point is the review loop, not the code."""
 
+import statistics
+
 
 def add(a: float, b: float) -> float:
     return a + b
@@ -18,11 +20,5 @@ def mean(values: list[float]) -> float:
 
 
 def median(values: list[float]) -> float:
-    """Middle value of the list; for an even count, the mean of the two middle values. Raises ValueError on an empty list."""
-    if not values:
-        raise ValueError("median of an empty list")
-    ordered = sorted(values)
-    mid = len(ordered) // 2
-    if len(ordered) % 2 == 0:
-        return (ordered[mid - 1] + ordered[mid]) / 2
-    return ordered[mid]
+    """Middle value of the list; for an even count, the mean of the two middle values. Raises ValueError (statistics.StatisticsError) on an empty list."""
+    return statistics.median(values)
