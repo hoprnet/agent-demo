@@ -174,6 +174,15 @@ been superseded by a newer push.
    `uses: <org>/claude-loop/.github/workflows/pr-loop.yml@main` plus `secrets: inherit`. Changing the procedure then changes
    it everywhere at once.
 
+## Two GitHub details the workflows work around
+
+- **Commit attribution.** The action's default `bot_id` is the user ID of `github-actions[bot]`, so a commit the coder
+  makes is attributed to that account, and GitHub holds the workflow run that push triggers for manual approval: the
+  reviewer's run shows `action_required` in the Actions tab and nothing happens until someone clicks "Approve and run".
+  Both workflows therefore set `bot_id: "209825114"` and `bot_name: "claude[bot]"`, the Claude GitHub App's own bot
+  user, so the coder's pushes are attributed to `claude[bot]` and trigger the reviewer like any other push.
+- **Workflow identity on `pull_request` events.** See the next section.
+
 ## The one rule about workflow changes
 
 On `pull_request` events (the reviewer's trigger, and the label event) GitHub runs the workflow file as it is on the

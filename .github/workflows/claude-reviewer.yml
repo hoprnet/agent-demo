@@ -55,6 +55,12 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # The action's default bot_id (41898282) is github-actions[bot]'s user ID, so commits it makes are attributed
+          # to that account and GitHub holds the workflow runs they trigger for manual approval ("action_required").
+          # 209825114 is the Claude GitHub App's own bot user, claude[bot]; with it, the coder's pushes trigger the
+          # reviewer like any other push.
+          bot_id: "209825114"
+          bot_name: "claude[bot]"
           allowed_bots: "claude[bot]"
           prompt: |
             You are the review agent for pull request #${{ env.PR }} in ${{ github.repository }}. The checked-out tree is
