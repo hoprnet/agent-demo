@@ -6,7 +6,7 @@ files under `.github/workflows/` are the mechanics; `README.md` explains the set
 
 ## Markers
 
-- Every post by the coder starts with `[coder]`. Every review by the reviewer starts with `[reviewer]`. The markers are how
+- Every post by the coder starts with `[coder]`. Every review by the reviewer starts with `[reviewer]`, as the very first characters of the body. The markers are how
   the triggers tell the two apart, since both post as the same GitHub identity; a post without its marker breaks the loop.
 - A `[reviewer]` review is a numbered list. The coder answers every number in one `[coder]` comment, by hash.
 

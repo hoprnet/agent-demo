@@ -25,17 +25,18 @@ jobs:
     # Gate before the action runs. Every branch requires the label. Bot-authored events pass only when they are
     # the reviewer agent's review (`[reviewer]` marker, not an approval) or Copilot's review; the coder's own
     # `[coder]` posts never re-trigger it; inline review comments count only from humans (Copilot's arrive as
-    # part of its review event, which already fires once).
+    # part of its review event, which already fires once). Markers are tested with startsWith, not contains: a
+    # review that quotes "[coder]" in its text (the reviewer's did) must still trigger the coder.
     if: |
       (github.event_name == 'issue_comment' && github.event.issue.pull_request && contains(github.event.issue.labels.*.name, 'claude-loop')
-        && !contains(github.event.comment.body, '[coder]')
-        && (!endsWith(github.actor, '[bot]') || contains(github.event.comment.body, '[reviewer]'))) ||
+        && !startsWith(github.event.comment.body, '[coder]')
+        && (!endsWith(github.actor, '[bot]') || startsWith(github.event.comment.body, '[reviewer]'))) ||
       (github.event_name == 'pull_request_review_comment' && contains(github.event.pull_request.labels.*.name, 'claude-loop')
         && !endsWith(github.actor, '[bot]')) ||
       (github.event_name == 'pull_request_review' && contains(github.event.pull_request.labels.*.name, 'claude-loop')
         && github.event.review.state != 'approved'
-        && !contains(github.event.review.body, '[coder]')
-        && (!endsWith(github.actor, '[bot]') || contains(github.event.review.body, '[reviewer]') || github.actor == 'copilot-pull-request-reviewer[bot]'))
+        && !startsWith(github.event.review.body, '[coder]')
+        && (!endsWith(github.actor, '[bot]') || startsWith(github.event.review.body, '[reviewer]') || github.actor == 'copilot-pull-request-reviewer[bot]'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
