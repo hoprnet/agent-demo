@@ -101,7 +101,8 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           bot_id: "209825114"
           bot_name: "claude[bot]"
-          allowed_bots: "claude[bot]"
+          # claude[bot]: the coder's pushes; github-actions[bot]: runs the reviewer's own dispatch of the coder chains into
+          allowed_bots: "claude[bot],github-actions[bot]"
           prompt: |
             You are the review agent for pull request #${{ env.PR }} in ${{ github.repository }}. The checked-out tree is
             the PR head ${{ steps.head.outputs.sha }}. Read AGENTS.md first and follow it. Then:
