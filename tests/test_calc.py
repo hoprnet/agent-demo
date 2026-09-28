@@ -59,3 +59,9 @@ def test_stdev_population():
     with pytest.raises(ValueError):
         calc.stdev([], sample=False)
     assert calc.stdev([2, 4, 4, 4, 5, 5, 7, 9], sample=True) == pytest.approx((32 / 7) ** 0.5)
+
+
+def test_stdev_zero_spread():
+    assert calc.stdev([3, 3, 3]) == 0.0
+    assert calc.stdev([3, 3, 3], sample=False) == 0.0
+    assert calc.stdev([5], sample=False) == 0.0
