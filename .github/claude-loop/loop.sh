@@ -270,9 +270,15 @@ report() {
 
 post_report() {
   local pr=$1 role=$2 hl=$3 hint=$4 lines=$5 body
+  local retry
+  if [ "$role" = reviewer ]; then
+    retry="To retry the review: remove and re-add the \`${LABEL}\` label, or run the claude-reviewer workflow from the Actions tab with PR number ${pr}."
+  else
+    retry="To retry: post any comment on this PR; the coder picks up every request it has not answered yet."
+  fi
   body="[loop] ❌ **${role} failed: ${hl}.**
 
-What to do: ${hint}.
+What to do: ${hint}. ${retry}
 
 Run: ${RUN_URL}"
   if [ -n "$lines" ]; then body+="
