@@ -1,4 +1,4 @@
-# Statistics helpers — a comprehensive overview
+# Statistics helpers
 
 This page covers the one statistics helper in `demo/calc.py`: `mean`.
 
