@@ -60,7 +60,12 @@ jobs:
       - name: Check out the PR head
         id: head
         run: |
-          cp .github/claude-loop/loop.sh "$RUNNER_TEMP/loop.sh"
+          # the helper script from the default branch, explicitly: pull_request events check out the PR's merge
+          # ref, which GitHub may have computed before the latest change to main, and a PR must not change the
+          # loop's own logic. /tmp/claude-loop/loop.sh is the path the coder may call for thread replies.
+          git show "origin/${{ github.event.repository.default_branch }}:.github/claude-loop/loop.sh" > "$RUNNER_TEMP/loop.sh"
+          chmod +x "$RUNNER_TEMP/loop.sh"
+          mkdir -p /tmp/claude-loop && cp "$RUNNER_TEMP/loop.sh" /tmp/claude-loop/loop.sh
           timeout 120 gh pr checkout "$PR"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "start=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
@@ -178,5 +183,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ github.event.repository.default_branch }}
           sparse-checkout: .github/claude-loop
       - run: .github/claude-loop/loop.sh report "${{ inputs.pr || github.event.pull_request.number }}" reviewer

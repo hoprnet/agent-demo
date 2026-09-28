@@ -39,5 +39,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ github.event.repository.default_branch }}
           sparse-checkout: .github/claude-loop
       - run: .github/claude-loop/loop.sh watchdog
