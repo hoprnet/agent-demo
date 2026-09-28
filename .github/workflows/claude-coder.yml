@@ -146,6 +146,14 @@ jobs:
           bot_name: "claude[bot]"
           # github-actions[bot] is the actor of a dispatch by the reviewer workflow
           allowed_bots: "claude[bot],copilot-pull-request-reviewer[bot],github-actions[bot]"
+          # skills from the two public marketplaces; see README, "Skills"
+          plugin_marketplaces: |
+            https://github.com/Teebor-Choka/skills.git
+            https://github.com/SCBuergel/seb-ai-skills.git
+          plugins: |
+            unslop@kauki-skills
+            write-clear-explainers@seb-ai-skills
+            hopr-debug@kauki-skills
           prompt: |
             You are the coding agent for pull request #${{ env.PR }} in ${{ github.repository }}, branch
             `${{ steps.head.outputs.branch }}` (checked out). Event: ${{ github.event_name }} by ${{ github.actor }}.
@@ -170,9 +178,14 @@ jobs:
                the commit hash (or say no commit), list each request with what was done or why not, and end with this
                exact last line: <!-- seen-until: ${{ steps.head.outputs.start }} -->
             If nothing needs a change, still post the summary saying so and why.
+
+            Skills: write the summary and every thread reply following the write-clear-explainers skill, then check
+            them with the unslop skill before posting. When your change edits prose (Markdown, docstrings, comments,
+            messages), apply both skills to that prose as well. When a request concerns HOPR behaviour (sessions,
+            SURBs, channels, relays, tickets, path-finding), load the hopr-debug skill before reasoning about it.
             Never edit .github/ or AGENTS.md. Never force-push. Never approve, review, retitle or close the PR.
           claude_args: |
-            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(python -m pytest:*),Bash(python3 -m pytest:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git add:*),Bash(git commit:*),Bash(git push origin HEAD),Bash(git fetch:*),Bash(git pull --rebase:*),Bash(git rebase:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh api repos/*/pulls/*/comments),Bash(gh api repos/*/pulls/*/reviews),Bash(/tmp/claude-loop/loop.sh reply:*)"
+            --allowedTools "Skill,Read,Glob,Grep,Edit,Write,Bash(python -m pytest:*),Bash(python3 -m pytest:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git add:*),Bash(git commit:*),Bash(git push origin HEAD),Bash(git fetch:*),Bash(git pull --rebase:*),Bash(git rebase:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh api repos/*/pulls/*/comments),Bash(gh api repos/*/pulls/*/reviews),Bash(/tmp/claude-loop/loop.sh reply:*)"
             --model claude-opus-5-5
             --max-turns 80
 

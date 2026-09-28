@@ -386,14 +386,19 @@ summary() {
   [ -f "$file" ] || { echo "no execution file for the ${role}" >> "${GITHUB_STEP_SUMMARY:-/dev/stderr}"; return 0; }
   out=$(jq -r --arg role "$role" '
     ([.[] | select(.type == "result")] | last) as $r
-    | "### \($role) run\n\n| turns | duration | cost (API-equivalent) | refused tool calls |\n|---|---|---|---|\n"
-      + "| \($r.num_turns // "?") | \((($r.duration_ms // 0) / 1000 | floor))s | $\($r.total_cost_usd // 0 | tostring | .[0:6]) | \(($r.permission_denials // []) | length) |\n"
+    | ([.[] | select(.type == "assistant") | .message.content[]? | select(.type == "tool_use" and .name == "Skill")
+        | (.input.skill // .input.name // "?")] | unique | join(", ")) as $skills
+    | "### \($role) run\n\n| turns | duration | cost (API-equivalent) | refused tool calls | skills used |\n|---|---|---|---|---|\n"
+      + "| \($r.num_turns // "?") | \((($r.duration_ms // 0) / 1000 | floor))s | $\($r.total_cost_usd // 0 | tostring | .[0:6]) | \(($r.permission_denials // []) | length) | \(if $skills == "" then "none" else $skills end) |\n"
       + (if (($r.permission_denials // []) | length) > 0 then
            "\nRefused (extend --allowedTools if these should be allowed):\n\n"
            + ([$r.permission_denials[] | "- `\(.tool_name)`: `\((.tool_input.command // (.tool_input | tostring))[0:200] | gsub("`"; "\u2032"))`"] | join("\n")) + "\n"
          else "" end)' "$file" 2>/dev/null || echo "could not read the execution file")
   echo "$out" >> "${GITHUB_STEP_SUMMARY:-/dev/stderr}"
   echo "$out"
+  # the same list as a plain log line, so tests can grep for it
+  jq -r '"loop: skills used: " + ([.[] | select(.type == "assistant") | .message.content[]? | select(.type == "tool_use" and .name == "Skill")
+         | (.input.skill // .input.name // "?")] | unique | join(", "))' "$file" 2>/dev/null || true
   # the agent's own error text, into the log where the report job can read and classify it
   jq -r '([.[] | select(.type == "result")] | last) as $r | select($r.is_error == true)
          | "loop: FAIL agent result (\($r.subtype // "?")): \(($r.result // "no result text") | tostring | gsub("\n"; " ") | .[0:400])"' \

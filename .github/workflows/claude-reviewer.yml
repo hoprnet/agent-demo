@@ -103,6 +103,14 @@ jobs:
           bot_name: "claude[bot]"
           # claude[bot]: the coder's pushes; github-actions[bot]: runs the reviewer's own dispatch of the coder chains into
           allowed_bots: "claude[bot],github-actions[bot]"
+          # skills from the two public marketplaces; see README, "Skills"
+          plugin_marketplaces: |
+            https://github.com/Teebor-Choka/skills.git
+            https://github.com/SCBuergel/seb-ai-skills.git
+          plugins: |
+            unslop@kauki-skills
+            write-clear-explainers@seb-ai-skills
+            hopr-debug@kauki-skills
           prompt: |
             You are the review agent for pull request #${{ env.PR }} in ${{ github.repository }}. The checked-out tree is
             the PR head ${{ steps.head.outputs.sha }}. Read AGENTS.md first and follow it. Then:
@@ -127,9 +135,14 @@ jobs:
                  sentence, then judge the code against the instruction.
                - Reviewer rounds so far: ${{ steps.rounds.outputs.n }} of ${{ env.MAX_ROUNDS }}. At the cap, use
                  `--comment` instead of `--request-changes` and say a human must decide; this ends the loop.
+            Skills: write the review body following the write-clear-explainers skill and check it with the unslop skill
+            before posting. When the PR changes prose (Markdown, docstrings, user-facing messages), review that prose
+            against both skills too: each concrete finding is a numbered item with file and line, like a code finding.
+            When the change concerns HOPR behaviour (sessions, SURBs, channels, relays, tickets, path-finding), load the
+            hopr-debug skill before judging it.
             Never edit files, never commit, never push. Never approve while a test fails.
           claude_args: |
-            --allowedTools "Read,Glob,Grep,Bash(python -m pytest:*),Bash(python3 -m pytest:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr review:*),Bash(gh api repos/*/pulls/*/comments),Bash(gh api repos/*/pulls/*/reviews)"
+            --allowedTools "Skill,Read,Glob,Grep,Bash(python -m pytest:*),Bash(python3 -m pytest:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr review:*),Bash(gh api repos/*/pulls/*/comments),Bash(gh api repos/*/pulls/*/reviews)"
             --model claude-opus-5-5
             --max-turns 80
 
