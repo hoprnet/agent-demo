@@ -23,3 +23,6 @@ def test_mean():
 def test_harmonic_mean():
     assert calc.harmonic_mean([1, 1]) == 1
     assert calc.harmonic_mean([1, 2, 4]) == pytest.approx(12 / 7)
+    for bad in ([], [1, 0], [1, -2]):
+        with pytest.raises(ValueError):
+            calc.harmonic_mean(bad)

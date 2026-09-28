@@ -18,5 +18,9 @@ def mean(values: list[float]) -> float:
 
 
 def harmonic_mean(values: list[float]) -> float:
-    """Harmonic mean: n divided by the sum of reciprocals."""
+    """Harmonic mean: n divided by the sum of reciprocals; raises ValueError on an empty list or a value <= 0."""
+    if not values:
+        raise ValueError("harmonic mean of an empty list")
+    if any(v <= 0 for v in values):
+        raise ValueError("harmonic mean needs positive values")
     return len(values) / sum(1 / v for v in values)
