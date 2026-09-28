@@ -1,5 +1,7 @@
 """A small module the proof-of-concept pull requests change. Keep it small: the point is the review loop, not the code."""
 
+from collections.abc import Sequence
+
 
 def add(a: float, b: float) -> float:
     return a + b
@@ -10,14 +12,14 @@ def divide(a: float, b: float) -> float:
     return a / b
 
 
-def mean(values: list[float]) -> float:
-    """Arithmetic mean; raises ValueError on an empty list."""
+def mean(values: Sequence[float]) -> float:
+    """Arithmetic mean; raises ValueError on an empty sequence."""
     if not values:
         raise ValueError("mean of an empty list")
     return sum(values) / len(values)
 
 
-def variance(values: list[float]) -> float:
+def variance(values: Sequence[float]) -> float:
     """Sample variance (divides by n - 1). Raises ValueError for fewer than two values."""
     if len(values) < 2:
         raise ValueError("variance needs at least two values")
