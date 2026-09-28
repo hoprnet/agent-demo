@@ -99,7 +99,11 @@ jobs:
                `gh pr diff ${{ env.PR }}`), every `[coder]` comment since then, and every human comment and inline
                comment, so you know what was asked.
             2. Verify, do not trust: run `python -m pytest -q`; read the changed code; check each claim in the `[coder]`
-               comments against the diff and the test output; check that each human request was either done or answered.
+               comments against the diff and the test output; check that each human request the coder answered was
+               either done or answered with a reason. Human requests with no `[coder]` answer yet are the coder's
+               work in progress (it is triggered separately and may be running now): do not turn them into numbered
+               items and do not request changes because of them alone; name them in one line under
+               "Not yet answered by the coder:".
             3. Submit exactly one review with `gh pr review ${{ env.PR }}`:
                - `--request-changes --body "..."` when anything the coder can change must change. The body starts with
                  `[reviewer]`, then a numbered list; every item names file and line, says what is wrong and what would

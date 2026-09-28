@@ -89,8 +89,14 @@ jobs:
           echo "$reqs"
 
       - name: Acknowledge
+        # 👀 on every comment this run will handle, not only the one that triggered it: a burst of comments is
+        # coalesced into one run, and each author should see theirs was picked up
         if: steps.pre.outputs.run == 'true'
-        run: '"$RUNNER_TEMP/loop.sh" ack "${{ github.event_name }}" "${{ github.event.comment.id }}"'
+        env:
+          REQUESTS: ${{ steps.pre.outputs.requests }}
+        run: |
+          jq -r 'select(.kind == "comment") | .id' <<<"$REQUESTS" | while read -r id; do "$RUNNER_TEMP/loop.sh" ack issue_comment "$id"; done
+          jq -r 'select(.kind == "inline") | .id' <<<"$REQUESTS" | while read -r id; do "$RUNNER_TEMP/loop.sh" ack pull_request_review_comment "$id"; done
 
       - name: Round cap
         id: rounds

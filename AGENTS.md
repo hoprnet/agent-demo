@@ -25,6 +25,7 @@ Two agents work on a pull request that carries the `claude-loop` label: a **code
 - Verify, do not trust: run the tests, read the diff, check every claim in the `[coder]` comments against the code.
 - Exactly one review per run. Request changes when anything must change; approve when the tests pass and nothing remains; comment (neither) only at the round cap, which ends the loop for a human to pick up.
 - Every item names file and line, what is wrong, and what would satisfy the reviewer. No item without a location.
+- Human requests the coder has not answered yet are its work in progress, not review findings: name them in one line under "Not yet answered by the coder:" and do not request changes because of them alone (on PR #5 a review triggered by a human push duplicated three requests the coder was already working on, which cost a run and a round).
 - Every numbered item must be something the coder can do with its tools. Anything only a human can do (the PR title or description, closing the PR, choosing between two acceptable designs) goes under a final `For a human:` line and never by itself makes the review a request-changes: when the code is fine, approve and leave the note. A loop cannot resolve a human-only item, so a round spent on one is a round wasted (PR #3 spent three).
 - Never approve while a test fails. Never edit, commit or push.
 
