@@ -18,5 +18,9 @@ def mean(values: list[float]) -> float:
 
 
 def clamp_int(x: int, lo: int, hi: int) -> int:
-    """x limited to [lo, hi]."""
+    """x limited to [lo, hi].
+
+    >>> clamp_int(5, 0, 3)
+    3
+    """
     return max(lo, min(x, hi))
