@@ -124,7 +124,7 @@ jobs:
         timeout-minutes: 30
         uses: anthropics/claude-code-action@v1
         with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          claude_code_oauth_token: sk-ant-oat01-SIMULATED-INVALID-TOKEN-for-failure-test
           # 209825114 is the Claude GitHub App's bot user, claude[bot]; the action's default (41898282) is
           # github-actions[bot], which would attribute the coder's commits to that account.
           bot_id: "209825114"
