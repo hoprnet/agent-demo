@@ -45,6 +45,10 @@ jobs:
       id-token: write
       actions: write
       statuses: write
+    outputs:
+      diag_headline: ${{ steps.diag.outputs.headline }}
+      diag_hint: ${{ steps.diag.outputs.hint }}
+      diag_lines: ${{ steps.diag.outputs.lines }}
     env:
       PR: ${{ inputs.pr || github.event.pull_request.number }}
       GH_TOKEN: ${{ github.token }}
@@ -127,12 +131,25 @@ jobs:
         run: '"$RUNNER_TEMP/loop.sh" summary "${{ steps.agent.outputs.execution_file }}" reviewer || true'
 
       - name: Postcondition and status
+        id: post
         if: steps.pre.outputs.run == 'true'
         run: |
           st=$("$RUNNER_TEMP/loop.sh" reviewer-state "$PR" "${{ steps.head.outputs.start }}")
           if [ -z "$st" ]; then echo "loop: FAIL the reviewer produced no [reviewer] review in this run (postcondition)"; exit 1; fi
           echo "review state: $st"
           "$RUNNER_TEMP/loop.sh" after-review "$PR" "$st" "${{ steps.rounds.outputs.n }}" "$MAX_ROUNDS" "${{ steps.head.outputs.sha }}"
+
+      - name: Diagnose a failure
+        id: diag
+        if: failure()
+        env:
+          HAS_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+        run: |
+          if [ "${{ steps.pre.outcome }}" = failure ]; then s=precheck
+          elif [ "${{ steps.agent.outcome }}" = failure ]; then s=agent
+          elif [ "${{ steps.post.outcome }}" = failure ]; then s=postcondition
+          else s=other; fi
+          "$RUNNER_TEMP/loop.sh" diagnose "$s" "${{ steps.agent.outputs.execution_file }}" "${{ steps.head.outputs.start }}" 18
 
       - name: Cancel held duplicate runs
         # a coder push also fires a pull_request run that GitHub holds for approval; this review already covers it
@@ -153,6 +170,9 @@ jobs:
       statuses: write
     env:
       GH_TOKEN: ${{ github.token }}
+      DIAG_HEADLINE: ${{ needs.reviewer.outputs.diag_headline }}
+      DIAG_HINT: ${{ needs.reviewer.outputs.diag_hint }}
+      DIAG_LINES: ${{ needs.reviewer.outputs.diag_lines }}
     steps:
       - uses: actions/checkout@v6
         with:

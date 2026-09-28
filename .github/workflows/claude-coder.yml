@@ -56,6 +56,9 @@ jobs:
       statuses: write
     outputs:
       pushed: ${{ steps.pushed.outputs.pushed }}
+      diag_headline: ${{ steps.diag.outputs.headline }}
+      diag_hint: ${{ steps.diag.outputs.hint }}
+      diag_lines: ${{ steps.diag.outputs.lines }}
     env:
       PR: ${{ github.event.pull_request.number || github.event.issue.number }}
       GH_TOKEN: ${{ github.token }}
@@ -165,10 +168,23 @@ jobs:
         run: '"$RUNNER_TEMP/loop.sh" summary "${{ steps.agent.outputs.execution_file }}" coder || true'
 
       - name: Postcondition, the coder replied
+        id: post
         if: steps.rounds.outputs.capped == 'false'
         run: |
           if "$RUNNER_TEMP/loop.sh" coder-posted "$PR" "${{ steps.head.outputs.start }}"; then echo "coder replied"; else
             echo "loop: FAIL the coder did not post its [coder] reply in this run (postcondition)"; exit 1; fi
+
+      - name: Diagnose a failure
+        id: diag
+        if: failure()
+        env:
+          HAS_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+        run: |
+          if [ "${{ steps.pre.outcome }}" = failure ]; then s=precheck
+          elif [ "${{ steps.agent.outcome }}" = failure ]; then s=agent
+          elif [ "${{ steps.post.outcome }}" = failure ]; then s=postcondition
+          else s=other; fi
+          "$RUNNER_TEMP/loop.sh" diagnose "$s" "${{ steps.agent.outputs.execution_file }}" "${{ steps.head.outputs.start }}" 30
 
       - name: Did the coder push?
         id: pushed
@@ -213,6 +229,9 @@ jobs:
       statuses: write
     env:
       GH_TOKEN: ${{ github.token }}
+      DIAG_HEADLINE: ${{ needs.coder.outputs.diag_headline }}
+      DIAG_HINT: ${{ needs.coder.outputs.diag_hint }}
+      DIAG_LINES: ${{ needs.coder.outputs.diag_lines }}
     steps:
       - uses: actions/checkout@v6
         with:

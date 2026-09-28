@@ -192,9 +192,48 @@ classify() {
   fi
 }
 
-# report PR ROLE: read the failed jobs of this run, classify, comment once, red status, error label
+# diagnose FAILED_STEP EXEC_FILE AGENT_START LIMIT_MIN: run inside the failing job (`if: failure()`), where the
+# agent's execution file is still on disk; writes headline, hint and lines to $GITHUB_OUTPUT for the report job.
+# (The report job cannot read this job's log: logs are not downloadable while the workflow run is in progress.)
+diagnose() {
+  local step=$1 file=$2 start=$3 limit=$4 text="" hl hint elapsed=0
+  if [ -f "$file" ]; then
+    text=$(jq -r '([.[] | select(.type == "result")] | last) as $r | select($r != null and $r.is_error == true)
+                  | "\($r.subtype // "?"): \(($r.result // "") | tostring | gsub("\n"; " ") | .[0:400])"' "$file" 2>/dev/null || true)
+  fi
+  if [ -n "$start" ]; then elapsed=$(( ( $(date -u +%s) - $(date -u -d "$start" +%s) ) / 60 )); fi
+  case "$step" in
+    agent)
+      if [ -n "$limit" ] && [ "$elapsed" -ge $(( limit - 1 )) ]; then
+        hl="the agent step timed out after about ${elapsed} minutes (limit ${limit})"; hint="the request may be too large for one run; split it into smaller comments, or raise timeout-minutes"
+      elif [ -z "${HAS_TOKEN:-true}" ] || [ "${HAS_TOKEN:-true}" = "false" ]; then
+        hl="no Claude token available to this run"; hint="set the CLAUDE_CODE_OAUTH_TOKEN secret; fork pull requests never receive secrets"
+      elif [ -n "$text" ]; then
+        IFS='|' read -r hl hint < <(classify <<<"$text")
+      else
+        hl="the agent step failed before Claude produced a result"; hint="open the run log; this is usually the action's setup (token, network, or a GitHub outage)"
+      fi ;;
+    precheck) hl="the loop could not read the pull request from the GitHub API"; hint="usually a transient GitHub API problem; post a comment to retry" ;;
+    postcondition) hl="the agent finished without posting its reply"; hint="see the run summary for refused tool calls; the agent may have been blocked from posting" ;;
+    push) hl="the coder could not push"; hint="check push access and branch protection for the Claude app" ;;
+    *) hl="a loop step failed (${step:-unknown})"; hint="see the run log" ;;
+  esac
+  {
+    echo "headline=$hl"; echo "hint=$hint"
+    echo "lines<<EOF_LINES"; [ -n "$text" ] && echo "agent: $text"; echo "failed step: ${step:-unknown}; agent ran ${elapsed} min"; echo "EOF_LINES"
+  } >> "${GITHUB_OUTPUT:-/dev/stdout}"
+  log "diagnosis: $hl"
+}
+
+# report PR ROLE: comment once, red status, error label. Uses the failing job's own diagnosis (DIAG_HEADLINE,
+# DIAG_HINT, DIAG_LINES) when it produced one; otherwise it is a job that never reached its diagnose step
+# (cancelled, timed out at job level, runner lost), and it falls back to the job log if GitHub already serves it.
 report() {
   local pr=$1 role=$2 jobs logs lines hl hint body
+  if [ -n "${DIAG_HEADLINE:-}" ]; then
+    hl=$DIAG_HEADLINE; hint=${DIAG_HINT:-see the run log}; lines=${DIAG_LINES:-}
+    post_report "$pr" "$role" "$hl" "$hint" "$lines"; return 0
+  fi
   jobs=$(ghx api "repos/$R/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT:-1}/jobs" --jq \
     '.jobs[] | select((.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out")
        and ([.steps[]? | select(.conclusion != null and .conclusion != "skipped")] | length > 1)) | .id' || true)
@@ -203,7 +242,7 @@ report() {
   local j l try
   for j in $jobs; do
     # a finished job's log can take a few seconds to become downloadable
-    for try in 1 2 3 4 5 6; do
+    for try in 1 2; do
       l=$(timeout 60 gh api "repos/$R/actions/jobs/$j/logs" 2>/dev/null || true)
       [ -n "$l" ] && break
       log "log of job $j not available yet (try $try)"; sleep 10
@@ -213,6 +252,15 @@ report() {
   lines=$(grep -E '##\[error\]|loop: FAIL|"is_error": *true|Error:|error:' <<<"$logs" | sed -E 's/^[0-9T:.Z-]+ //; s/##\[error\]//' \
           | grep -v '^\s*$' | awk '!seen[$0]++' | tail -8 | cut -c1-300 || true)
   IFS='|' read -r hl hint < <(classify <<<"$logs")
+  if [ -z "$logs" ] || [ "$(tr -d '[:space:]' <<<"$logs")" = "" ]; then
+    hl="the ${role} job stopped before it could diagnose itself (cancelled, timed out, or the runner was lost)"
+    hint="open the run; post a comment or re-add the label to retry"
+  fi
+  post_report "$pr" "$role" "$hl" "$hint" "$lines"
+}
+
+post_report() {
+  local pr=$1 role=$2 hl=$3 hint=$4 lines=$5 body
   body="[loop] ❌ **${role} failed: ${hl}.**
 
 What to do: ${hint}.
@@ -220,7 +268,7 @@ What to do: ${hint}.
 Run: ${RUN_URL}"
   if [ -n "$lines" ]; then body+="
 
-Last error lines from the log:
+Details:
 \`\`\`
 ${lines}
 \`\`\`"
@@ -342,6 +390,7 @@ case "$cmd" in
   cancel-held) cancel_held ;;
   classify) classify ;;
   report) report "$@" ;;
+  diagnose) diagnose "$@" ;;
   mark-error) mark_error "$@" ;;
   clear-error) clear_error "$@" ;;
   watchdog) watchdog ;;
