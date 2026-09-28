@@ -22,3 +22,11 @@ def test_mean():
 
 def test_geometric_mean():
     assert calc.geometric_mean([4]) == 4
+    assert calc.geometric_mean([2, 8]) == pytest.approx(4)
+    assert calc.geometric_mean([1, 3, 9]) == pytest.approx(3)
+    with pytest.raises(ValueError):
+        calc.geometric_mean([])
+    with pytest.raises(ValueError):
+        calc.geometric_mean([0, 4])
+    with pytest.raises(ValueError):
+        calc.geometric_mean([-4, 1])
