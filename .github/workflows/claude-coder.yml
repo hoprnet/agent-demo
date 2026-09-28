@@ -67,8 +67,10 @@ jobs:
       - name: Check out the PR branch
         id: head
         run: |
-          # the helper script from the default branch, so a PR cannot change the loop's own logic
+          # the helper script from the default branch, so a PR cannot change the loop's own logic; the fixed path
+          # /tmp/claude-loop/loop.sh is the one the coder may call for thread replies
           cp .github/claude-loop/loop.sh "$RUNNER_TEMP/loop.sh"
+          mkdir -p /tmp/claude-loop && cp .github/claude-loop/loop.sh /tmp/claude-loop/loop.sh
           timeout 120 gh pr checkout "$PR"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "branch=$(git branch --show-current)" >> "$GITHUB_OUTPUT"
@@ -111,6 +113,7 @@ jobs:
         run: timeout 300 python3 -m pip install --quiet --disable-pip-version-check pytest
 
       - name: Run the coding agent
+        id: agent
         if: steps.rounds.outputs.capped == 'false'
         timeout-minutes: 30
         uses: anthropics/claude-code-action@v1
@@ -139,17 +142,21 @@ jobs:
             3. Push with `git push origin HEAD`. If the push is rejected because the branch moved, run
                `git pull --rebase origin ${{ steps.head.outputs.branch }}`, run the tests again, and push again. If the
                rebase conflicts, run `git rebase --abort` and say so in your comment instead of forcing anything.
-            4. For each inline request (kind inline), reply in its thread:
-               `gh api repos/${{ github.repository }}/pulls/${{ env.PR }}/comments/<id>/replies -f body='[coder] ...'`.
+            4. For each inline request (kind inline), reply in its thread with exactly this command (one call per
+               comment, body in single quotes): `/tmp/claude-loop/loop.sh reply ${{ env.PR }} <comment id> '<short answer>'`
             5. Post exactly one summary with `gh pr comment ${{ env.PR }} --body "..."`. It must start with `[coder]`, name
                the commit hash (or say no commit), list each request with what was done or why not, and end with this
                exact last line: <!-- seen-until: ${{ steps.head.outputs.start }} -->
             If nothing needs a change, still post the summary saying so and why.
             Never edit .github/ or AGENTS.md. Never force-push. Never approve, review, retitle or close the PR.
           claude_args: |
-            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(python -m pytest:*),Bash(python3 -m pytest:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git add:*),Bash(git commit:*),Bash(git push origin HEAD),Bash(git fetch:*),Bash(git pull --rebase:*),Bash(git rebase:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh api repos/*/pulls/*/comments),Bash(gh api repos/*/pulls/*/reviews),Bash(gh api repos/*/pulls/*/comments/*/replies:*)"
+            --allowedTools "Read,Glob,Grep,Edit,Write,Bash(python -m pytest:*),Bash(python3 -m pytest:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git add:*),Bash(git commit:*),Bash(git push origin HEAD),Bash(git fetch:*),Bash(git pull --rebase:*),Bash(git rebase:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh api repos/*/pulls/*/comments),Bash(gh api repos/*/pulls/*/reviews),Bash(/tmp/claude-loop/loop.sh reply:*)"
             --model claude-opus-5-5
             --max-turns 80
+
+      - name: Run summary (turns, time, refused tool calls)
+        if: always() && steps.agent.outcome != 'skipped' && steps.agent.outcome != ''
+        run: '"$RUNNER_TEMP/loop.sh" summary "${{ steps.agent.outputs.execution_file }}" coder || true'
 
       - name: Postcondition, the coder replied
         if: steps.rounds.outputs.capped == 'false'

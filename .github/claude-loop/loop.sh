@@ -280,6 +280,31 @@ watchdog() {
   done
 }
 
+# A threaded reply to an inline review comment, for the coder: reply PR COMMENT_ID BODY. The body gets the
+# [coder] marker if it lacks it. A dedicated command keeps the coder's tool allow-list exact.
+reply() {
+  local pr=$1 id=$2 body=$3
+  [[ "$body" == "[coder]"* ]] || body="[coder] $body"
+  ghx api "repos/$R/pulls/$pr/comments/$id/replies" -f body="$body" --jq '"replied in thread \(.in_reply_to_id): \(.html_url)"'
+}
+
+# Summarise an agent run from the action's execution file into the job summary: turns, time, cost, and every
+# tool call the allow-list refused (so a missing permission shows on the run page, not only as a vague excuse).
+summary() {
+  local file=$1 role=$2 out
+  [ -f "$file" ] || { echo "no execution file for the ${role}" >> "${GITHUB_STEP_SUMMARY:-/dev/stderr}"; return 0; }
+  out=$(jq -r --arg role "$role" '
+    ([.[] | select(.type == "result")] | last) as $r
+    | "### \($role) run\n\n| turns | duration | cost (API-equivalent) | refused tool calls |\n|---|---|---|---|\n"
+      + "| \($r.num_turns // "?") | \((($r.duration_ms // 0) / 1000 | floor))s | $\($r.total_cost_usd // 0 | tostring | .[0:6]) | \(($r.permission_denials // []) | length) |\n"
+      + (if (($r.permission_denials // []) | length) > 0 then
+           "\nRefused (extend --allowedTools if these should be allowed):\n\n"
+           + ([$r.permission_denials[] | "- `\(.tool_name)`: `\((.tool_input.command // (.tool_input | tostring))[0:200] | gsub("`"; "\u2032"))`"] | join("\n")) + "\n"
+         else "" end)' "$file" 2>/dev/null || echo "could not read the execution file")
+  echo "$out" >> "${GITHUB_STEP_SUMMARY:-/dev/stderr}"
+  echo "$out"
+}
+
 # The round cap: one incident per label cycle. cap PR ROUNDS MAX
 cap() {
   local pr=$1 n=$2 max=$3 since; since=$(label_time "$pr")
@@ -308,6 +333,8 @@ case "$cmd" in
   clear-error) clear_error "$@" ;;
   watchdog) watchdog ;;
   cap) cap "$@" ;;
+  reply) reply "$@" ;;
+  summary) summary "$@" ;;
   incident) incident "$@" ;;
   *) echo "usage: loop.sh <command> [args]; see the case list at the end of the file" >&2; exit 2 ;;
 esac
