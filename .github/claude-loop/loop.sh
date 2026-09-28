@@ -281,7 +281,9 @@ report() {
 post_report() {
   local pr=$1 role=$2 hl=$3 hint=$4 lines=$5 body
   local retry
-  if [ "$role" = reviewer ]; then
+  if [ "$role" = vpn-test ]; then
+    retry="To retry: run the claude-vpn-test workflow again from the Actions tab, or remove and re-add the \`vpn-test\` label."
+  elif [ "$role" = reviewer ]; then
     retry="To retry the review: remove and re-add the \`${LABEL}\` label, or run the claude-reviewer workflow from the Actions tab with PR number ${pr}."
   else
     retry="To retry: post any comment on this PR; the coder picks up every request it has not answered yet."
