@@ -86,6 +86,8 @@ jobs:
           sudo systemctl start ssh || sudo systemctl start sshd
           ssh-keygen -q -t ed25519 -N "" -f "$RUNNER_TEMP/selftest_key"
           mkdir -p ~/.ssh && cat "$RUNNER_TEMP/selftest_key.pub" >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
+          # mask the throwaway key line by line: values in GITHUB_ENV are not secrets and would show in every step's env
+          while IFS= read -r line; do [ -n "$line" ] && echo "::add-mask::$line"; done < "$RUNNER_TEMP/selftest_key"
           { echo "VPN_HOST=127.0.0.1"; echo "VPN_USER=$(id -un)"
             echo "VPN_KEY<<EOF_KEY"; cat "$RUNNER_TEMP/selftest_key"; echo "EOF_KEY"
             echo "VPN_KNOWN_HOSTS<<EOF_KH"; ssh-keyscan -t ed25519 127.0.0.1 2>/dev/null; echo "EOF_KH"; } >> "$GITHUB_ENV"
@@ -165,7 +167,7 @@ jobs:
           [ -n "$gw" ] && [ -n "$dev" ] || { echo "loop: FAIL could not read the default route on the test machine"; exit 1; }
           mkdir -p guard && for f in deadman.sh ssh-keeper.sh; do timeout 30 curl -fsSL -o "guard/$f" "$GUARD_URL/$f"; done
           cp .github/claude-loop/vpn-lock.sh guard/
-          tar -C guard -cf - . | timeout 60 ssh vpnhost "$S mkdir -p /root/gvpn-guard && $S tar -C /root/gvpn-guard -xf - && $S chmod +x /root/gvpn-guard/*.sh"
+          tar -C guard -cf - . | timeout 60 ssh vpnhost "$S mkdir -p /root/gvpn-guard && $S tar -C /root/gvpn-guard -xf - && $S chmod +x /root/gvpn-guard/deadman.sh /root/gvpn-guard/ssh-keeper.sh /root/gvpn-guard/vpn-lock.sh"
           timeout 60 ssh vpnhost "$S systemctl stop gvpn-ssh-keeper gvpn-deadman 2>/dev/null; $S systemctl reset-failed gvpn-ssh-keeper gvpn-deadman 2>/dev/null;
             $S systemd-run --unit=gvpn-ssh-keeper /root/gvpn-guard/ssh-keeper.sh $myip $gw $dev &&
             $S touch /run/gvpn-deadman.alive && $S systemd-run --unit=gvpn-deadman /root/gvpn-guard/deadman.sh"
@@ -200,7 +202,7 @@ jobs:
             (gvpn-ssh-keeper and gvpn-deadman, section 0 of the skill) and the heartbeat. Teardown of the guards is also
             the workflow's job: you only disconnect the VPN.
 
-            ${{ inputs.self_test && 'SELF-TEST MODE: the machine is this GitHub runner itself (vpnhost is 127.0.0.1). Never run `gnosis_vpn-ctl connect`: the killswitch would cut this runner off. Do only: (a) the survey of section 1, (b) confirm with systemctl that gvpn-ssh-keeper and gvpn-deadman are active, (c) confirm `/root/gvpn-guard/vpn-lock.sh status` shows the lock held by this run, (d) if install was requested, install the client, start it with `start-client 30m` and read status and balance, then `stop-client`. Report `[vpn-test] PASS (self-test)` only if (b) and (c) hold and (d), when requested, worked; otherwise FAIL with the reason. Skip the numbered steps below.' || '' }}
+            ${{ inputs.self_test && 'SELF-TEST MODE: the machine is this GitHub runner itself (vpnhost is 127.0.0.1). Never run `gnosis_vpn-ctl connect`: the killswitch would cut this runner off. Do only: (a) the survey of section 1, (b) confirm with systemctl that gvpn-ssh-keeper and gvpn-deadman are active, (c) confirm `sudo -n /root/gvpn-guard/vpn-lock.sh status` shows the lock held by this run, (d) if install was requested, install the client, start it with `start-client 30m` and read status and balance, then `stop-client`. Report `[vpn-test] PASS (self-test)` only if (b) and (c) hold and (d), when requested, worked; otherwise FAIL with the reason. Skip the numbered steps below.' || '' }}
 
             Do, in order:
             1. Section 1 of the skill: survey the machine (read only). Stop nothing.
