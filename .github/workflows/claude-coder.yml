@@ -172,7 +172,7 @@ jobs:
         id: post
         if: steps.rounds.outputs.capped == 'false'
         run: |
-          if "$RUNNER_TEMP/loop.sh" coder-posted "$PR" "${{ steps.head.outputs.start }}"; then echo "coder replied"; else
+          if "$RUNNER_TEMP/loop.sh" coder-posted "$PR" "${{ steps.head.outputs.start }}"; then echo "coder replied"; "$RUNNER_TEMP/loop.sh" clear-error "$PR"; else
             echo "loop: FAIL the coder did not post its [coder] reply in this run (postcondition)"; exit 1; fi
 
       - name: Diagnose a failure
