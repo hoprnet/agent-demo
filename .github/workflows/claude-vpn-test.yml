@@ -34,6 +34,10 @@ on:
         description: exit to connect to (empty = the first ready one)
         required: false
         default: ""
+      self_test:
+        description: test the machinery against this runner instead of the machine (no VPN connect)
+        type: boolean
+        default: false
   pull_request:
     types: [labeled]
 
@@ -73,11 +77,25 @@ jobs:
           ref: ${{ github.event.repository.default_branch }}
           sparse-checkout: .github/claude-loop
 
+      - name: Self-test, the runner plays the test machine
+        id: self
+        if: inputs.self_test
+        run: |
+          # an SSH server on the runner, a throwaway key, and the runner's passwordless sudo stand in for the machine
+          command -v sshd > /dev/null || timeout 300 sudo apt-get install -y -qq openssh-server > /dev/null
+          sudo systemctl start ssh || sudo systemctl start sshd
+          ssh-keygen -q -t ed25519 -N "" -f "$RUNNER_TEMP/selftest_key"
+          mkdir -p ~/.ssh && cat "$RUNNER_TEMP/selftest_key.pub" >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
+          { echo "VPN_HOST=127.0.0.1"; echo "VPN_USER=$(id -un)"
+            echo "VPN_KEY<<EOF_KEY"; cat "$RUNNER_TEMP/selftest_key"; echo "EOF_KEY"
+            echo "VPN_KNOWN_HOSTS<<EOF_KH"; ssh-keyscan -t ed25519 127.0.0.1 2>/dev/null; echo "EOF_KH"; } >> "$GITHUB_ENV"
+          echo "self-test: SSH server on the runner ready"
+
       - name: Is the test machine configured?
         id: cfg
         env:
-          VPN_HOST: ${{ secrets.VPN_TEST_HOST }}
-          VPN_KEY: ${{ secrets.VPN_TEST_SSH_KEY }}
+          VPN_HOST: ${{ env.VPN_HOST || secrets.VPN_TEST_HOST }}
+          VPN_KEY: ${{ env.VPN_KEY || secrets.VPN_TEST_SSH_KEY }}
         run: |
           missing=""
           [ -n "$VPN_HOST" ] || missing+=" VPN_TEST_HOST"
@@ -90,10 +108,10 @@ jobs:
       - name: SSH to the test machine
         id: ssh
         env:
-          VPN_HOST: ${{ secrets.VPN_TEST_HOST }}
-          VPN_USER: ${{ secrets.VPN_TEST_USER }}
-          VPN_KEY: ${{ secrets.VPN_TEST_SSH_KEY }}
-          VPN_KNOWN_HOSTS: ${{ secrets.VPN_TEST_KNOWN_HOSTS }}
+          VPN_HOST: ${{ env.VPN_HOST || secrets.VPN_TEST_HOST }}
+          VPN_USER: ${{ env.VPN_USER || secrets.VPN_TEST_USER }}
+          VPN_KEY: ${{ env.VPN_KEY || secrets.VPN_TEST_SSH_KEY }}
+          VPN_KNOWN_HOSTS: ${{ env.VPN_KNOWN_HOSTS || secrets.VPN_TEST_KNOWN_HOSTS }}
         run: |
           # the address never appears in logs or reports; the agent only knows the alias `vpnhost`
           echo "::add-mask::$VPN_HOST"
@@ -182,6 +200,8 @@ jobs:
             (gvpn-ssh-keeper and gvpn-deadman, section 0 of the skill) and the heartbeat. Teardown of the guards is also
             the workflow's job: you only disconnect the VPN.
 
+            ${{ inputs.self_test && 'SELF-TEST MODE: the machine is this GitHub runner itself (vpnhost is 127.0.0.1). Never run `gnosis_vpn-ctl connect`: the killswitch would cut this runner off. Do only: (a) the survey of section 1, (b) confirm with systemctl that gvpn-ssh-keeper and gvpn-deadman are active, (c) confirm `/root/gvpn-guard/vpn-lock.sh status` shows the lock held by this run, (d) if install was requested, install the client, start it with `start-client 30m` and read status and balance, then `stop-client`. Report `[vpn-test] PASS (self-test)` only if (b) and (c) hold and (d), when requested, worked; otherwise FAIL with the reason. Skip the numbered steps below.' || '' }}
+
             Do, in order:
             1. Section 1 of the skill: survey the machine (read only). Stop nothing.
             2. ${{ inputs.install && format('Section 2: install or upgrade the client with the official script, channel {0}.', inputs.channel) || 'Do not install or upgrade anything; test the client that is installed. If none is installed, say so and stop after the survey.' }}
@@ -221,7 +241,7 @@ jobs:
         id: post
         if: always() && steps.agent.outcome != 'skipped' && steps.agent.outcome != ''
         env:
-          VPN_HOST: ${{ secrets.VPN_TEST_HOST }}
+          VPN_HOST: ${{ env.VPN_HOST || secrets.VPN_TEST_HOST }}
         run: |
           [ -s /tmp/vpn-report.md ] || { echo "loop: FAIL the VPN test agent produced no report (postcondition)"; exit 1; }
           # belt and braces: the address must not leak into a public comment
