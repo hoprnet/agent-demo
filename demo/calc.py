@@ -18,5 +18,7 @@ def mean(values: list[float]) -> float:
 
 
 def percent(part: float, whole: float) -> float:
-    """part as a percentage of whole (0 to 100); raises ZeroDivisionError for whole == 0."""
+    """part as a percentage of whole (0 to 100); raises ValueError for whole == 0."""
+    if whole == 0:
+        raise ValueError("percent of a zero whole")
     return part / whole * 100

@@ -23,5 +23,7 @@ def test_mean():
 def test_percent():
     assert calc.percent(1, 2) == 50
     assert calc.percent(3, 4) == 75
-    with pytest.raises(ZeroDivisionError):
+    with pytest.raises(ValueError, match="percent of a zero whole"):
         calc.percent(1, 0)
+    with pytest.raises(ValueError, match="percent of a zero whole"):
+        calc.percent(1, 0.0)
