@@ -20,6 +20,11 @@ def test_mean():
         calc.mean([])
 
 
+def test_sqrt2():
+    assert calc.SQRT2 == pytest.approx(2**0.5)
+    assert calc.SQRT2**2 == pytest.approx(2)
+
+
 def test_variance():
     assert calc.variance([2, 4, 4, 4, 5, 5, 7, 9]) == pytest.approx(32 / 7)
     with pytest.raises(ValueError):

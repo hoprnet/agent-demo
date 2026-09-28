@@ -3,6 +3,8 @@
 import math
 from collections.abc import Sequence
 
+SQRT2 = math.sqrt(2)
+
 
 def add(a: float, b: float) -> float:
     return a + b
