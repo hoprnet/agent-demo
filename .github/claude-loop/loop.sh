@@ -214,7 +214,14 @@ diagnose() {
         hl="the agent step failed before Claude produced a result"; hint="open the run log; this is usually the action's setup (token, network, or a GitHub outage)"
       fi ;;
     precheck) hl="the loop could not read the pull request from the GitHub API"; hint="usually a transient GitHub API problem; post a comment to retry" ;;
-    postcondition) hl="the agent finished without posting its reply"; hint="see the run summary for refused tool calls; the agent may have been blocked from posting" ;;
+    postcondition)
+      # no execution file at all means the action never ran Claude; the usual cause is its workflow-identity check
+      if [ ! -f "$file" ] && ! git diff --quiet "origin/${DEFAULT_BRANCH:-main}" -- .github/workflows 2>/dev/null; then
+        hl="the workflow files on this PR branch differ from ${DEFAULT_BRANCH:-main}, so the Claude action refused to run"
+        hint="merge ${DEFAULT_BRANCH:-main} into the PR branch and push (workflow changes belong in their own PR)"
+      else
+        hl="the agent finished without posting its reply"; hint="see the run summary for refused tool calls; the agent may have been blocked from posting"
+      fi ;;
     push) hl="the coder could not push"; hint="check push access and branch protection for the Claude app" ;;
     *) hl="a loop step failed (${step:-unknown})"; hint="see the run log" ;;
   esac
@@ -327,8 +334,13 @@ watchdog() {
     sha=$(head_sha "$pr")
     st=$(ghx api "repos/$R/commits/$sha/status" --jq ".statuses[] | select(.context == \"$CONTEXT\") | \"\(.state) \(.updated_at)\"" | head -1 || true)
     if [ -z "$st" ] && reviewer_precheck "$pr" "$sha" 2>/dev/null; then
-      local pushed; pushed=$(ghx api "repos/$R/commits/$sha" --jq '.commit.committer.date')
-      if [[ "$pushed" < "$cut_ack" && "$pushed" > "$since" ]]; then
+      local pushed later
+      pushed=$(ghx api "repos/$R/commits/$sha" --jq '.commit.committer.date')
+      # a head reviewed before this version recorded outcomes as statuses (a repo migrating to it) has no status;
+      # a [reviewer] review submitted after the head commit was made counts as its review
+      later=$(list "repos/$R/pulls/$pr/reviews" | jq --arg b "$BOT" --arg p "$pushed" \
+        '[.[] | select(.user.login == $b and (.body | startswith("[reviewer]")) and .submitted_at > $p)] | length')
+      if [ "$later" -eq 0 ] && [[ "$pushed" < "$cut_ack" && "$pushed" > "$since" ]]; then
         incident "$pr" "unreviewed-$sha" "the head commit ${sha:0:7} has had no review for over ${ACK_MIN} minutes and no agent run is active. The claude-reviewer workflow may be disabled or GitHub Actions down. Re-add the ${LABEL} label to retry."
       fi
     elif [[ "$st" == pending* ]] && [[ "${st#* }" < "$cut_stall" ]]; then
