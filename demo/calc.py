@@ -16,7 +16,7 @@ def divide(a: float, b: float) -> float:
 def mean(values: Sequence[float]) -> float:
     """Arithmetic mean; raises ValueError on an empty sequence."""
     if not values:
-        raise ValueError("mean of an empty list")
+        raise ValueError("mean of an empty sequence")
     return sum(values) / len(values)
 
 
