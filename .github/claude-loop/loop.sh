@@ -399,7 +399,7 @@ summary() {
 # The round cap: one incident per label cycle. cap PR ROUNDS MAX
 cap() {
   local pr=$1 n=$2 max=$3 since; since=$(label_time "$pr")
-  incident "$pr" "cap-$since" "the reviewer has requested changes $n times since the ${LABEL} label was added (cap: $max). The loop stops here and a human decides. To grant another $max rounds, remove and re-add the ${LABEL} label."
+  incident "$pr" "cap-$since" "the review loop has reached its cap of $max change-request rounds since the ${LABEL} label was added. The reviewer's remaining findings are in its last review. A human decides now: fix by hand, close the PR, or remove and re-add the ${LABEL} label to allow another $max rounds. Team members' own comments still reach the coder."
 }
 
 cmd=${1:-}; shift || true
