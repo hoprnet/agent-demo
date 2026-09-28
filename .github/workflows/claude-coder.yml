@@ -125,7 +125,7 @@ jobs:
       - name: Run the coding agent
         id: agent
         if: steps.rounds.outputs.capped == 'false'
-        timeout-minutes: 1
+        timeout-minutes: 30
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -185,7 +185,7 @@ jobs:
           elif [ "${{ steps.agent.outcome }}" = failure ]; then s=agent
           elif [ "${{ steps.post.outcome }}" = failure ]; then s=postcondition
           else s=other; fi
-          "$RUNNER_TEMP/loop.sh" diagnose "$s" "${{ steps.agent.outputs.execution_file }}" "${{ steps.rounds.outputs.agent_start }}" 1
+          "$RUNNER_TEMP/loop.sh" diagnose "$s" "${{ steps.agent.outputs.execution_file }}" "${{ steps.rounds.outputs.agent_start }}" 30
 
       - name: Did the coder push?
         id: pushed

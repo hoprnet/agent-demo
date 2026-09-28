@@ -205,7 +205,7 @@ diagnose() {
   case "$step" in
     agent)
       if [ -n "$limit" ] && [ "$elapsed" -ge $(( limit - 1 )) ]; then
-        hl="the agent step timed out after about ${elapsed} minutes (limit ${limit})"; hint="the request may be too large for one run; split it into smaller comments, or raise timeout-minutes"
+        hl="the agent step hit its time limit (${limit} min; it ran about ${elapsed} min)"; hint="the request may be too large for one run; split it into smaller comments, or raise timeout-minutes"
       elif [ -z "${HAS_TOKEN:-true}" ] || [ "${HAS_TOKEN:-true}" = "false" ]; then
         hl="no Claude token available to this run"; hint="set the CLAUDE_CODE_OAUTH_TOKEN secret; fork pull requests never receive secrets"
       elif [ -n "$text" ]; then
