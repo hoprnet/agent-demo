@@ -127,7 +127,7 @@ jobs:
         timeout-minutes: 30
         uses: anthropics/claude-code-action@v1
         with:
-          claude_code_oauth_token: sk-ant-oat01-SIMULATED-INVALID-TOKEN-for-failure-test
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # 209825114 is the Claude GitHub App's bot user, claude[bot]; the action's default (41898282) is
           # github-actions[bot], which would attribute the coder's commits to that account.
           bot_id: "209825114"
@@ -161,7 +161,7 @@ jobs:
           claude_args: |
             --allowedTools "Read,Glob,Grep,Edit,Write,Bash(python -m pytest:*),Bash(python3 -m pytest:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git add:*),Bash(git commit:*),Bash(git push origin HEAD),Bash(git fetch:*),Bash(git pull --rebase:*),Bash(git rebase:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh api repos/*/pulls/*/comments),Bash(gh api repos/*/pulls/*/reviews),Bash(/tmp/claude-loop/loop.sh reply:*)"
             --model claude-opus-5-5
-            --max-turns 80
+            --max-turns 2
 
       - name: Run summary (turns, time, refused tool calls)
         if: always() && steps.agent.outcome != 'skipped' && steps.agent.outcome != ''
