@@ -15,3 +15,8 @@ def mean(values: list[float]) -> float:
     if not values:
         raise ValueError("mean of an empty list")
     return sum(values) / len(values)
+
+
+def percent(part: float, whole: float) -> float:
+    """part as a percentage of whole (0 to 100)."""
+    return part / whole
