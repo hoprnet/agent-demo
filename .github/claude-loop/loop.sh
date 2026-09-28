@@ -362,7 +362,7 @@ watchdog() {
         incident "$pr" "unreviewed-$sha" "the head commit ${sha:0:7} has had no review for over ${ACK_MIN} minutes and no agent run is active. The claude-reviewer workflow may be disabled or GitHub Actions down. Re-add the ${LABEL} label to retry."
       fi
     elif [[ "$st" == pending* ]] && [[ "${st#* }" < "$cut_stall" ]]; then
-      incident "$pr" "stalled-$sha-${st#* }" "the loop has been waiting since ${st#* } (status pending) and no agent run is active: a run died without reporting. Post a comment or re-add the ${LABEL} label to retry."
+      incident "$pr" "stalled-$sha-${st#* }" "the loop has been waiting since ${st#* } (status pending) and no agent run is active: a run died without reporting, or the event that should have continued the loop was lost (for example while a workflow was disabled). Post a comment or re-add the ${LABEL} label to retry."
     fi
   done
 }
