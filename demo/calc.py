@@ -20,5 +20,9 @@ def mean(values: list[float]) -> float:
 
 
 def geometric_mean(values: list[float]) -> float:
-    """n-th root of the product of n positive values."""
+    """n-th root of the product of n positive values; raises ValueError on an empty list or a value <= 0."""
+    if not values:
+        raise ValueError("geometric mean of an empty list")
+    if any(v <= 0 for v in values):
+        raise ValueError("geometric mean needs positive values")
     return math.prod(values) ** (1 / len(values))
