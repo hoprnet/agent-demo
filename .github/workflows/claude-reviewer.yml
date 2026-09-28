@@ -81,6 +81,7 @@ jobs:
           n=$("$RUNNER_TEMP/loop.sh" rounds "$PR")
           echo "n=$n" >> "$GITHUB_OUTPUT"
           "$RUNNER_TEMP/loop.sh" status "$PR" pending "reviewer checking ${{ steps.head.outputs.sha }}" "${{ steps.head.outputs.sha }}"
+          echo "agent_start=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
       - name: Install the test tooling
         if: steps.pre.outputs.run == 'true'
@@ -149,7 +150,7 @@ jobs:
           elif [ "${{ steps.agent.outcome }}" = failure ]; then s=agent
           elif [ "${{ steps.post.outcome }}" = failure ]; then s=postcondition
           else s=other; fi
-          "$RUNNER_TEMP/loop.sh" diagnose "$s" "${{ steps.agent.outputs.execution_file }}" "${{ steps.head.outputs.start }}" 18
+          "$RUNNER_TEMP/loop.sh" diagnose "$s" "${{ steps.agent.outputs.execution_file }}" "${{ steps.rounds.outputs.agent_start }}" 18
 
       - name: Cancel held duplicate runs
         # a coder push also fires a pull_request run that GitHub holds for approval; this review already covers it

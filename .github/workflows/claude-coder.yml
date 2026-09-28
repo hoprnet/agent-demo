@@ -114,6 +114,7 @@ jobs:
           else
             echo "capped=false" >> "$GITHUB_OUTPUT"
             "$RUNNER_TEMP/loop.sh" status "$PR" pending "coder working (${{ github.event_name }} by ${{ github.actor }})" "${{ steps.head.outputs.sha }}"
+            echo "agent_start=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Install the test tooling
@@ -124,7 +125,7 @@ jobs:
       - name: Run the coding agent
         id: agent
         if: steps.rounds.outputs.capped == 'false'
-        timeout-minutes: 30
+        timeout-minutes: 1
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -161,7 +162,7 @@ jobs:
           claude_args: |
             --allowedTools "Read,Glob,Grep,Edit,Write,Bash(python -m pytest:*),Bash(python3 -m pytest:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git add:*),Bash(git commit:*),Bash(git push origin HEAD),Bash(git fetch:*),Bash(git pull --rebase:*),Bash(git rebase:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh api repos/*/pulls/*/comments),Bash(gh api repos/*/pulls/*/reviews),Bash(/tmp/claude-loop/loop.sh reply:*)"
             --model claude-opus-5-5
-            --max-turns 2
+            --max-turns 80
 
       - name: Run summary (turns, time, refused tool calls)
         if: always() && steps.agent.outcome != 'skipped' && steps.agent.outcome != ''
@@ -184,7 +185,7 @@ jobs:
           elif [ "${{ steps.agent.outcome }}" = failure ]; then s=agent
           elif [ "${{ steps.post.outcome }}" = failure ]; then s=postcondition
           else s=other; fi
-          "$RUNNER_TEMP/loop.sh" diagnose "$s" "${{ steps.agent.outputs.execution_file }}" "${{ steps.head.outputs.start }}" 30
+          "$RUNNER_TEMP/loop.sh" diagnose "$s" "${{ steps.agent.outputs.execution_file }}" "${{ steps.rounds.outputs.agent_start }}" 1
 
       - name: Did the coder push?
         id: pushed
