@@ -15,3 +15,8 @@ def mean(values: list[float]) -> float:
     if not values:
         raise ValueError("mean of an empty list")
     return sum(values) / len(values)
+
+
+def harmonic_mean(values: list[float]) -> float:
+    """Harmonic mean: n divided by the sum of reciprocals."""
+    return len(values) / sum(values)

@@ -18,3 +18,7 @@ def test_mean():
     assert calc.mean([1, 2, 3]) == 2
     with pytest.raises(ValueError):
         calc.mean([])
+
+
+def test_harmonic_mean():
+    assert calc.harmonic_mean([1, 1]) == 1
