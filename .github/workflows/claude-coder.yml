@@ -185,7 +185,7 @@ jobs:
             SURBs, channels, relays, tickets, path-finding), load the hopr-debug skill before reasoning about it.
             Never edit .github/ or AGENTS.md. Never force-push. Never approve, review, retitle or close the PR.
           claude_args: |
-            --allowedTools "Skill,Read,Glob,Grep,Edit,Write,Bash(python -m pytest:*),Bash(python3 -m pytest:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git add:*),Bash(git commit:*),Bash(git push origin HEAD),Bash(git fetch:*),Bash(git pull --rebase:*),Bash(git rebase:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh api repos/*/pulls/*/comments),Bash(gh api repos/*/pulls/*/reviews),Bash(/tmp/claude-loop/loop.sh reply:*)"
+            --allowedTools "Skill,Read,Glob,Grep,Edit,Write,Bash(python -m pytest:*),Bash(python3 -m pytest:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git add:*),Bash(git commit:*),Bash(git push origin HEAD),Bash(git fetch:*),Bash(git pull --rebase:*),Bash(git rebase:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh api repos/*/pulls/*/comments),Bash(gh api repos/*/pulls/*/reviews),Bash(gh api repos/*/pulls/*/comments --jq:*),Bash(gh api repos/*/pulls/*/reviews --jq:*),Bash(gh api repos/*/issues/*/comments:*),Bash(git ls-files:*),Bash(git status:*),Bash(/tmp/claude-loop/loop.sh reply:*)"
             --model claude-opus-5-5
             --max-turns 80
 

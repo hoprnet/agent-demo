@@ -1,0 +1,281 @@
+# Gnosis VPN test on a real machine, driven by a Claude agent with the test-gnosis-vpn skill (and hopr-debug
+# for anything that goes wrong in the HOPR network). Start it by hand (Actions tab), or add the `vpn-test`
+# label to a pull request; the report lands on the PR as a `[vpn-test]` comment and in the run summary.
+#
+# One test at a time, enforced twice: the global concurrency group below serialises this repository's runs,
+# and a lock on the host itself (.github/claude-loop/vpn-lock.sh, under /run/lock) also excludes testers from
+# other repositories or people running the skill by hand.
+#
+# Safety does not depend on the agent: before the agent starts, the workflow installs the skill's two guards
+# on the host (ssh-keeper keeps this runner's SSH alive through the VPN killswitch; deadman tears the VPN down
+# after 6 minutes without a heartbeat and reboots after 12) and runs the heartbeat itself. Teardown always runs.
+#
+# Needs the secrets VPN_TEST_HOST, VPN_TEST_SSH_KEY and preferably VPN_TEST_KNOWN_HOSTS (optional VPN_TEST_USER,
+# default root). See README, "Test Gnosis VPN on a machine".
+name: claude-vpn-test
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: pull request to post the report on (optional)
+        required: false
+        default: ""
+      install:
+        description: install or upgrade the client before testing
+        type: boolean
+        default: false
+      channel:
+        description: install channel (only with install)
+        type: choice
+        options: [stable, snapshot, experimental]
+        default: stable
+      destination:
+        description: exit to connect to (empty = the first ready one)
+        required: false
+        default: ""
+  pull_request:
+    types: [labeled]
+
+concurrency:
+  group: gnosis-vpn-test-host
+  cancel-in-progress: false
+
+env:
+  # the guard scripts, from the test-gnosis-vpn skill at a pinned commit
+  GUARD_URL: https://raw.githubusercontent.com/SCBuergel/seb-ai-skills/74cba7a8d0714ce5d67f1439d086bbf7fd845629/skills/test-gnosis-vpn/scripts
+  LOCK_WAIT_MIN: 30
+  LOCK_STALE_MIN: 15
+
+jobs:
+  vpn-test:
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'vpn-test'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+      statuses: write
+    outputs:
+      diag_headline: ${{ steps.diag.outputs.headline }}
+      diag_hint: ${{ steps.diag.outputs.hint }}
+      diag_lines: ${{ steps.diag.outputs.lines }}
+    env:
+      PR: ${{ inputs.pr || github.event.pull_request.number }}
+      GH_TOKEN: ${{ github.token }}
+      OWNER: ${{ github.repository }} run ${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: .github/claude-loop
+
+      - name: Is the test machine configured?
+        id: cfg
+        env:
+          VPN_HOST: ${{ secrets.VPN_TEST_HOST }}
+          VPN_KEY: ${{ secrets.VPN_TEST_SSH_KEY }}
+        run: |
+          missing=""
+          [ -n "$VPN_HOST" ] || missing+=" VPN_TEST_HOST"
+          [ -n "$VPN_KEY" ] || missing+=" VPN_TEST_SSH_KEY"
+          if [ -n "$missing" ]; then
+            echo "loop: FAIL the VPN test machine is not configured: missing secret(s)${missing}"
+            echo "missing=${missing# }" >> "$GITHUB_OUTPUT"; exit 1
+          fi
+
+      - name: SSH to the test machine
+        id: ssh
+        env:
+          VPN_HOST: ${{ secrets.VPN_TEST_HOST }}
+          VPN_USER: ${{ secrets.VPN_TEST_USER }}
+          VPN_KEY: ${{ secrets.VPN_TEST_SSH_KEY }}
+          VPN_KNOWN_HOSTS: ${{ secrets.VPN_TEST_KNOWN_HOSTS }}
+        run: |
+          # the address never appears in logs or reports; the agent only knows the alias `vpnhost`
+          echo "::add-mask::$VPN_HOST"
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$VPN_KEY" > ~/.ssh/vpn_test_key && chmod 600 ~/.ssh/vpn_test_key
+          if [ -n "$VPN_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$VPN_KNOWN_HOSTS" > ~/.ssh/known_hosts; check=yes
+          else
+            check=accept-new
+            echo "::warning::VPN_TEST_KNOWN_HOSTS is not set, so the host key is trusted on first use. Set it to pin the key."
+          fi
+          cat > ~/.ssh/config <<EOF
+          Host vpnhost
+            HostName $VPN_HOST
+            User ${VPN_USER:-root}
+            IdentityFile ~/.ssh/vpn_test_key
+            IdentitiesOnly yes
+            StrictHostKeyChecking $check
+            ConnectTimeout 15
+            ServerAliveInterval 15
+            ServerAliveCountMax 4
+          EOF
+          if ! timeout 45 ssh vpnhost true; then
+            echo "loop: FAIL cannot reach the VPN test machine over SSH (host down, key not authorised, or host key mismatch)"; exit 1
+          fi
+          # root or passwordless sudo is needed for the guards and for the client
+          if timeout 30 ssh vpnhost '[ "$(id -u)" = 0 ]'; then echo "sudo=" >> "$GITHUB_OUTPUT"
+          elif timeout 30 ssh vpnhost 'sudo -n true'; then echo "sudo=sudo -n" >> "$GITHUB_OUTPUT"
+          else echo "loop: FAIL the SSH user on the VPN test machine is neither root nor allowed passwordless sudo"; exit 1; fi
+          echo "SSH to the test machine works"
+
+      - name: Take the host lock (one test at a time)
+        id: lock
+        run: |
+          end=$(( $(date +%s) + LOCK_WAIT_MIN * 60 ))
+          while :; do
+            out=$(timeout 60 ssh vpnhost "${{ steps.ssh.outputs.sudo }} bash -s -- acquire '$OWNER' $LOCK_STALE_MIN" < .github/claude-loop/vpn-lock.sh) && rc=0 || rc=$?
+            echo "$out"
+            [ "$rc" -eq 0 ] && { echo "held=true" >> "$GITHUB_OUTPUT"; break; }
+            if [ "$(date +%s)" -ge "$end" ]; then echo "loop: FAIL the VPN test machine stayed busy for ${LOCK_WAIT_MIN} min: $out"; exit 1; fi
+            sleep 30
+          done
+
+      - name: Install the guards and start the heartbeat
+        id: guard
+        run: |
+          S="${{ steps.ssh.outputs.sudo }}"
+          myip=$(timeout 20 curl -fsS -4 https://ifconfig.me)
+          echo "::add-mask::$myip"
+          read -r gw dev < <(timeout 30 ssh vpnhost "ip route show default" | awk '/default/ {for (i=1;i<NF;i++) {if ($i=="via") g=$(i+1); if ($i=="dev") d=$(i+1)}; print g, d; exit}')
+          [ -n "$gw" ] && [ -n "$dev" ] || { echo "loop: FAIL could not read the default route on the test machine"; exit 1; }
+          mkdir -p guard && for f in deadman.sh ssh-keeper.sh; do timeout 30 curl -fsSL -o "guard/$f" "$GUARD_URL/$f"; done
+          cp .github/claude-loop/vpn-lock.sh guard/
+          tar -C guard -cf - . | timeout 60 ssh vpnhost "$S mkdir -p /root/gvpn-guard && $S tar -C /root/gvpn-guard -xf - && $S chmod +x /root/gvpn-guard/*.sh"
+          timeout 60 ssh vpnhost "$S systemctl stop gvpn-ssh-keeper gvpn-deadman 2>/dev/null; $S systemctl reset-failed gvpn-ssh-keeper gvpn-deadman 2>/dev/null;
+            $S systemd-run --unit=gvpn-ssh-keeper /root/gvpn-guard/ssh-keeper.sh $myip $gw $dev &&
+            $S touch /run/gvpn-deadman.alive && $S systemd-run --unit=gvpn-deadman /root/gvpn-guard/deadman.sh"
+          # the heartbeat: keeps the dead-man switch and the host lock alive while this job lives
+          nohup bash -c "while true; do timeout 20 ssh vpnhost \"$S touch /run/gvpn-deadman.alive; $S /root/gvpn-guard/vpn-lock.sh refresh '$OWNER'\" >> heartbeat.log 2>&1 || echo \"\$(date -u +%T) heartbeat failed\" >> heartbeat.log; sleep 60; done" > /dev/null 2>&1 &
+          echo $! > heartbeat.pid
+          echo "guards installed, heartbeat running"
+
+      - name: Run the VPN test agent
+        id: agent
+        timeout-minutes: 45
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          bot_id: "209825114"
+          bot_name: "claude[bot]"
+          allowed_bots: "claude[bot],github-actions[bot]"
+          plugin_marketplaces: |
+            https://github.com/Teebor-Choka/skills.git
+            https://github.com/SCBuergel/seb-ai-skills.git
+          plugins: |
+            test-gnosis-vpn@seb-ai-skills
+            hopr-debug@kauki-skills
+            write-clear-explainers@seb-ai-skills
+            unslop@kauki-skills
+          prompt: |
+            You test Gnosis VPN on a remote Linux machine. Load the test-gnosis-vpn skill first and follow it. Reach the
+            machine only as `ssh vpnhost` (prefix commands that need root with `${{ steps.ssh.outputs.sudo }}` if that is
+            not empty). Never write the machine's IP address or hostname into anything you post.
+
+            Already done by the workflow, do not repeat or undo: SSH access, the one-test-at-a-time lock, both guards
+            (gvpn-ssh-keeper and gvpn-deadman, section 0 of the skill) and the heartbeat. Teardown of the guards is also
+            the workflow's job: you only disconnect the VPN.
+
+            Do, in order:
+            1. Section 1 of the skill: survey the machine (read only). Stop nothing.
+            2. ${{ inputs.install && format('Section 2: install or upgrade the client with the official script, channel {0}.', inputs.channel) || 'Do not install or upgrade anything; test the client that is installed. If none is installed, say so and stop after the survey.' }}
+            3. Section 3: start the client with a short keep-alive (`start-client 30m`), wait for run_mode Running, read status and balance. No funding: if funding is insufficient, report it and skip the connect.
+            4. Section 5, test plan items 1 to 3: connect to ${{ inputs.destination && format('the destination "{0}"', inputs.destination) || 'the first destination whose route health is ReadyToConnect' }}, wait for connected, check that the exit IP changed (report only whether it changed, never the IPs), run the 10 MB download and a ping, disconnect, and confirm the killswitch table is gone.
+            5. If anything in steps 3 and 4 fails or behaves unexpectedly, load the hopr-debug skill and use it to interpret what you see (route health, SURBs, sessions, channels) before you report.
+            6. Always end with the VPN disconnected and `stop-client`.
+
+            Write the report to /tmp/vpn-report.md with the write-clear-explainers skill, then check it with the unslop
+            skill. Start it with the line `[vpn-test] PASS` or `[vpn-test] FAIL` (FAIL if any test-plan step failed),
+            then: package and client versions, network, funding status, each test-plan step with pass or fail and the
+            measured numbers, and for a failure your diagnosis and what a human should look at.
+          claude_args: |
+            --allowedTools "Skill,Read,Write,Bash(ssh vpnhost:*),Bash(curl:*),Bash(sleep:*),Bash(date:*)"
+            --model claude-opus-5-5
+            --max-turns 120
+
+      - name: Run summary (turns, time, refused tool calls, skills)
+        if: always() && steps.agent.outcome != 'skipped' && steps.agent.outcome != ''
+        run: '.github/claude-loop/loop.sh summary "${{ steps.agent.outputs.execution_file }}" vpn-test || true'
+
+      - name: Tear down (always)
+        if: always() && steps.lock.outputs.held == 'true'
+        run: |
+          S="${{ steps.ssh.outputs.sudo }}"
+          # the skill's order: VPN down first, then the guards, then the heartbeat, then the lock
+          if timeout 90 ssh vpnhost "timeout 30 $S gnosis_vpn-ctl disconnect; timeout 30 $S gnosis_vpn-ctl stop-client; for fam in inet ip ip6; do $S nft list table \$fam gnosis_vpn_ks >/dev/null 2>&1 && echo \"killswitch table still present (\$fam)\"; done; $S systemctl stop gvpn-deadman gvpn-ssh-keeper; echo teardown done"; then
+            echo "teardown ok"
+          else
+            echo "::warning::the test machine was unreachable at teardown; its dead-man switch tears the VPN down within 6 minutes and reboots it after 12"
+          fi
+          [ -f heartbeat.pid ] && kill "$(cat heartbeat.pid)" 2>/dev/null || true
+          timeout 60 ssh vpnhost "$S /root/gvpn-guard/vpn-lock.sh release '$OWNER'" || echo "::warning::could not release the host lock; it expires after ${LOCK_STALE_MIN} minutes without a heartbeat"
+          tail -5 heartbeat.log 2>/dev/null || true
+
+      - name: Publish the report
+        id: post
+        if: always() && steps.agent.outcome != 'skipped' && steps.agent.outcome != ''
+        env:
+          VPN_HOST: ${{ secrets.VPN_TEST_HOST }}
+        run: |
+          [ -s /tmp/vpn-report.md ] || { echo "loop: FAIL the VPN test agent produced no report (postcondition)"; exit 1; }
+          # belt and braces: the address must not leak into a public comment
+          sed -i "s/$(printf '%s' "$VPN_HOST" | sed 's/[.[\*^$/]/\\&/g')/<test machine>/g" /tmp/vpn-report.md
+          { echo "## Gnosis VPN test report"; echo; cat /tmp/vpn-report.md; } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$PR" ]; then gh api -X POST "repos/${{ github.repository }}/issues/$PR/comments" -F body=@/tmp/vpn-report.md > /dev/null; fi
+          if head -1 /tmp/vpn-report.md | grep -q '\[vpn-test\] FAIL'; then echo "loop: FAIL the VPN test reported a failure (see the report)"; exit 1; fi
+
+      - name: Diagnose a failure
+        id: diag
+        if: failure()
+        env:
+          HAS_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+        run: |
+          if [ "${{ steps.cfg.outcome }}" = failure ]; then
+            { echo "headline=the VPN test machine is not configured (missing secret(s): ${{ steps.cfg.outputs.missing }})"
+              echo "hint=add the secrets as described in README, 'Test Gnosis VPN on a machine'"; echo "lines<<EOF_LINES"; echo "EOF_LINES"; } >> "$GITHUB_OUTPUT"
+          elif [ "${{ steps.ssh.outcome }}" = failure ]; then
+            { echo "headline=cannot reach the VPN test machine over SSH"; echo "hint=check the host is up, the public key is in authorized_keys, and VPN_TEST_KNOWN_HOSTS matches"; echo "lines<<EOF_LINES"; echo "EOF_LINES"; } >> "$GITHUB_OUTPUT"
+          elif [ "${{ steps.lock.outcome }}" = failure ]; then
+            { echo "headline=the VPN test machine stayed busy with another test for ${LOCK_WAIT_MIN} minutes"; echo "hint=wait and run again; the lock names its holder in the run log"; echo "lines<<EOF_LINES"; echo "EOF_LINES"; } >> "$GITHUB_OUTPUT"
+          elif [ "${{ steps.guard.outcome }}" = failure ]; then
+            { echo "headline=could not install the safety guards on the VPN test machine"; echo "hint=see the run log; nothing was connected"; echo "lines<<EOF_LINES"; echo "EOF_LINES"; } >> "$GITHUB_OUTPUT"
+          elif [ "${{ steps.agent.outcome }}" = failure ]; then
+            .github/claude-loop/loop.sh diagnose agent "${{ steps.agent.outputs.execution_file }}" "" 45
+          else
+            if [ -s /tmp/vpn-report.md ]; then
+              { echo "headline=the VPN test failed"; echo "hint=read the [vpn-test] report on this PR or in the run summary"
+                echo "lines<<EOF_LINES"; head -12 /tmp/vpn-report.md; echo "EOF_LINES"; } >> "$GITHUB_OUTPUT"
+            else
+              .github/claude-loop/loop.sh diagnose postcondition "${{ steps.agent.outputs.execution_file }}" "" 45
+            fi
+          fi
+
+  # Make a failure visible on the PR when there is one (a dispatched run without a PR shows red in the Actions tab).
+  report:
+    needs: vpn-test
+    if: always() && needs.vpn-test.result == 'failure' && (inputs.pr != '' || github.event.pull_request.number)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      actions: read
+      statuses: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DIAG_HEADLINE: ${{ needs.vpn-test.outputs.diag_headline }}
+      DIAG_HINT: ${{ needs.vpn-test.outputs.diag_hint }}
+      DIAG_LINES: ${{ needs.vpn-test.outputs.diag_lines }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          sparse-checkout: .github/claude-loop
+      - run: .github/claude-loop/loop.sh report "${{ inputs.pr || github.event.pull_request.number }}" vpn-test
