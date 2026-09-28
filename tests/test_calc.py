@@ -1,3 +1,5 @@
+"""Tests for demo/calc.py, including a run of its docstring examples."""
+
 import doctest
 
 import pytest
