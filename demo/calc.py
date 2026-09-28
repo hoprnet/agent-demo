@@ -31,6 +31,5 @@ def variance(values: Sequence[float], *, sample: bool = True) -> float:
 
 
 def stdev(values: Sequence[float], *, sample: bool = True) -> float:
-    """Square root of variance: sample standard deviation by default, population with sample=False.
-    Raises ValueError where variance does."""
+    """Standard deviation, the square root of variance; same sample keyword and ValueError cases."""
     return math.sqrt(variance(values, sample=sample))
