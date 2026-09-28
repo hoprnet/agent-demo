@@ -5,6 +5,7 @@
 # triggers the coder; an approval ends the loop. The `claude-loop` commit status on the PR head follows it:
 # pending while it works or while changes are open, green on approval, red on failure or at the round cap.
 name: claude-reviewer
+# (T13: this line makes the PR branch's workflow differ from main)
 
 on:
   pull_request:
