@@ -175,7 +175,9 @@ classify() {
     echo "workflow file on the PR branch differs from main|merge main into the PR branch and push; see README, 'workflow identity'"
   elif grep -qiE 'CLAUDE_CODE_OAUTH_TOKEN is required|ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN|no credentials|secret.*not set' <<<"$t"; then
     echo "no Claude token available to this run|set the CLAUDE_CODE_OAUTH_TOKEN secret; fork pull requests never receive secrets"
-  elif grep -qiE 'usage limit|rate.?limit|quota|(status|error|http|code)[: ]*429|429 too many|too many requests|limit reached|out of (usage|credits)|overloaded_error' <<<"$t"; then
+  elif grep -qiE 'overloaded_error|(status|error|http|code)[: ]*529|api is overloaded' <<<"$t"; then
+    echo "the Claude API was overloaded (a temporary Anthropic-side problem, not your quota)|retry in a few minutes: post a comment on the PR"
+  elif grep -qiE 'usage limit|rate.?limit|quota|(status|error|http|code)[: ]*429|429 too many|too many requests|limit reached|hit your( usage)? limit|(weekly|session|5-hour|five-hour) limit|limit (will )?resets?|out of (usage|credits|extra usage)' <<<"$t"; then
     echo "Claude usage limit or rate limit reached|wait for the subscription window to reset, then comment on the PR or re-add the label"
   elif grep -qiE '(status|error|http|code)[: ]*401|401 unauthorized|authentication_error|authentication failed|invalid api key|please run /login|invalid.*(token|api key|x-api-key)|unauthori[sz]ed|OAuth token (has )?expired|invalid bearer' <<<"$t"; then
     echo "Claude authentication failed|the CLAUDE_CODE_OAUTH_TOKEN secret is invalid, expired or revoked; run claude setup-token and replace it"
