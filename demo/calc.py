@@ -30,6 +30,7 @@ def variance(values: Sequence[float], *, sample: bool = True) -> float:
     return sum((v - m) ** 2 for v in values) / (len(values) - ddof)
 
 
-def stdev(values: Sequence[float]) -> float:
-    """Sample standard deviation, the square root of variance. Raises ValueError for fewer than two values."""
-    return math.sqrt(variance(values))
+def stdev(values: Sequence[float], *, sample: bool = True) -> float:
+    """Square root of variance: sample standard deviation by default, population with sample=False.
+    Raises ValueError where variance does."""
+    return math.sqrt(variance(values, sample=sample))
