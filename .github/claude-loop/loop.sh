@@ -177,7 +177,7 @@ classify() {
     echo "no Claude token available to this run|set the CLAUDE_CODE_OAUTH_TOKEN secret; fork pull requests never receive secrets"
   elif grep -qiE 'usage limit|rate.?limit|quota|(status|error|http|code)[: ]*429|429 too many|too many requests|limit reached|out of (usage|credits)|overloaded_error' <<<"$t"; then
     echo "Claude usage limit or rate limit reached|wait for the subscription window to reset, then comment on the PR or re-add the label"
-  elif grep -qiE '(status|error|http|code)[: ]*401|401 unauthorized|authentication_error|authentication failed|invalid.*(token|api key|x-api-key)|unauthori[sz]ed|OAuth token (has )?expired|invalid bearer' <<<"$t"; then
+  elif grep -qiE '(status|error|http|code)[: ]*401|401 unauthorized|authentication_error|authentication failed|invalid api key|please run /login|invalid.*(token|api key|x-api-key)|unauthori[sz]ed|OAuth token (has )?expired|invalid bearer' <<<"$t"; then
     echo "Claude authentication failed|the CLAUDE_CODE_OAUTH_TOKEN secret is invalid, expired or revoked; run claude setup-token and replace it"
   elif grep -qiE 'exceeding the configured maximum|max.?turns|error_max_turns' <<<"$t"; then
     echo "the agent hit its turn limit|raise --max-turns in the workflow, or split the request into smaller comments"
@@ -200,7 +200,16 @@ report() {
        and ([.steps[]? | select(.conclusion != null and .conclusion != "skipped")] | length > 1)) | .id' || true)
   if [ -z "$jobs" ]; then log "no started job failed in this run (a queued run replaced by a newer one); nothing to report"; return 0; fi
   logs=""
-  for j in $jobs; do logs+=$(timeout 60 gh api "repos/$R/actions/jobs/$j/logs" 2>/dev/null || true); logs+=$'\n'; done
+  local j l try
+  for j in $jobs; do
+    # a finished job's log can take a few seconds to become downloadable
+    for try in 1 2 3 4 5 6; do
+      l=$(timeout 60 gh api "repos/$R/actions/jobs/$j/logs" 2>/dev/null || true)
+      [ -n "$l" ] && break
+      log "log of job $j not available yet (try $try)"; sleep 10
+    done
+    logs+="$l"$'\n'
+  done
   lines=$(grep -E '##\[error\]|loop: FAIL|"is_error": *true|Error:|error:' <<<"$logs" | sed -E 's/^[0-9T:.Z-]+ //; s/##\[error\]//' \
           | grep -v '^\s*$' | awk '!seen[$0]++' | tail -8 | cut -c1-300 || true)
   IFS='|' read -r hl hint < <(classify <<<"$logs")
@@ -303,6 +312,10 @@ summary() {
          else "" end)' "$file" 2>/dev/null || echo "could not read the execution file")
   echo "$out" >> "${GITHUB_STEP_SUMMARY:-/dev/stderr}"
   echo "$out"
+  # the agent's own error text, into the log where the report job can read and classify it
+  jq -r '([.[] | select(.type == "result")] | last) as $r | select($r.is_error == true)
+         | "loop: FAIL agent result (\($r.subtype // "?")): \(($r.result // "no result text") | tostring | gsub("\n"; " ") | .[0:400])"' \
+    "$file" 2>/dev/null || true
 }
 
 # The round cap: one incident per label cycle. cap PR ROUNDS MAX
