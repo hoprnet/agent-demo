@@ -1,3 +1,5 @@
+import doctest
+
 import pytest
 
 from demo import calc
@@ -18,6 +20,12 @@ def test_mean():
     assert calc.mean([1, 2, 3]) == 2
     with pytest.raises(ValueError):
         calc.mean([])
+
+
+def test_doctests():
+    results = doctest.testmod(calc)
+    assert results.attempted > 0
+    assert results.failed == 0
 
 
 def test_sqrt2():
