@@ -148,11 +148,21 @@ settle() {
   esac
 }
 
+# Start the coder by hand for a PR (workflow_dispatch is the one event a workflow token may trigger)
+kick_coder() {
+  local ref; ref=$(ghx api "repos/$R" --jq '.default_branch')
+  ghx api -X POST "repos/$R/actions/workflows/claude-coder.yml/dispatches" -f ref="$ref" -f "inputs[pr]=$1" > /dev/null \
+    && log "dispatched the coder for PR #$1" || log "could not dispatch the coder for PR #$1"
+}
+
 # After a review, record its outcome on the reviewed commit. after_review PR STATE ROUNDS MAX SHA
+# An approval while human requests are still unanswered (comments made before the label, or while it was off)
+# starts the coder, since no change request will.
 after_review() {
   local pr=$1 st=$2 n=$3 max=$4 sha=$5
   case "$st" in
-    APPROVED) status "$pr" success "approved by the reviewer" "$sha"; clear_error "$pr" ;;
+    APPROVED) status "$pr" success "approved by the reviewer" "$sha"; clear_error "$pr"
+              if coder_precheck "$pr" > /dev/null 2>&1; then log "approved, but the coder has open requests"; kick_coder "$pr"; fi ;;
     CHANGES_REQUESTED) status "$pr" pending "changes requested (round $((n + 1)) of $max); coder is next" "$sha"; clear_error "$pr" ;;
     COMMENTED) cap "$pr" "$n" "$max"; status "$pr" failure "round cap reached ($max); a human decides" "$sha" ;;
   esac
@@ -415,6 +425,7 @@ case "$cmd" in
   clear-error) clear_error "$@" ;;
   watchdog) watchdog ;;
   cap) cap "$@" ;;
+  kick-coder) kick_coder "$@" ;;
   reply) reply "$@" ;;
   summary) summary "$@" ;;
   incident) incident "$@" ;;
