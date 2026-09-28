@@ -22,3 +22,4 @@ def test_mean():
 
 def test_harmonic_mean():
     assert calc.harmonic_mean([1, 1]) == 1
+    assert calc.harmonic_mean([1, 2, 4]) == pytest.approx(12 / 7)

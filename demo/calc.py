@@ -19,4 +19,4 @@ def mean(values: list[float]) -> float:
 
 def harmonic_mean(values: list[float]) -> float:
     """Harmonic mean: n divided by the sum of reciprocals."""
-    return len(values) / sum(values)
+    return len(values) / sum(1 / v for v in values)
