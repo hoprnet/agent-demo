@@ -17,7 +17,7 @@ Two agents work on a pull request that carries the `claude-loop` label: a **code
 - Push to the pull request's own branch. Never force-push, never touch another branch, never rewrite history.
 - One `[coder]` summary comment per run: hash, then the list of requests with the outcome of each. An inline review comment also gets a short `[coder]` reply in its own thread, so the answer sits next to the code.
 - If the push is rejected because the branch moved (someone pushed meanwhile), pull with rebase, rerun the tests, push again. On a rebase conflict, abort and say so; never force.
-- Never edit `.github/workflows/` or `AGENTS.md` from a run: a change to the mechanics is a human's decision.
+- Never edit anything under `.github/` (the workflows and `.github/claude-loop/loop.sh`) or `AGENTS.md` from a run: a change to the mechanics is a human's decision.
 - Never review or approve the pull request: that is the reviewer's job and the separation is the point.
 
 ## Reviewer
