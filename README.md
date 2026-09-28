@@ -1,134 +1,189 @@
-# agent-demo: a coder agent and a review agent on one pull request
+# claude-loop: a coder agent and a review agent on your pull requests
 
-A proof of concept for reviewing pull requests with two Claude Code agents that never share a run: a **coder** that acts on comments and pushes fixes, and a **reviewer** that verifies every push and posts one review. Both run as GitHub Actions through the Claude Code GitHub Action, bill your Claude subscription rather than the API, and are switched on per pull request with one label. The procedure they follow is `AGENTS.md`; this file is the setup.
+Two Claude Code agents work on a pull request that carries the `claude-loop` label. The **coder** acts on what people write on the PR and pushes fixes. The **reviewer** checks every push, runs the tests and posts one review. They never share a run, so the reviewer judges the coder's work independently. Both run as GitHub Actions through the Claude Code GitHub Action and bill your Claude subscription, not the API. Every state and every failure shows on the PR itself.
+
+This repository is the reference setup and its test bed. `AGENTS.md` is the procedure both agents follow, `.github/workflows/` and `.github/claude-loop/loop.sh` are the mechanics, and this file explains setup, daily use and what to do when something goes wrong.
 
 ## Quick start
 
-1. Install the Claude GitHub App on the repository and store a `claude setup-token` result as the secret `CLAUDE_CODE_OAUTH_TOKEN` (details below).
+1. Install the Claude GitHub App on the repository and store a `claude setup-token` result as the repository secret `CLAUDE_CODE_OAUTH_TOKEN` (details under "Set up a repository").
 2. Create the label `claude-loop`.
-3. Open a pull request and add the label. The reviewer runs; if it requests changes, the coder fixes and pushes; the reviewer approves when the tests pass and nothing remains.
-4. Watch the Actions tab and the PR timeline. Remove the label to stop.
+3. Open a pull request and add the label. The reviewer runs; if it requests changes, the coder fixes and pushes, and the reviewer checks again until it approves.
+4. Talk to the loop by commenting on the PR, in the conversation or on a line of code. Remove the label to stop.
 
-## How the loop runs
+## What you see on the pull request
 
-```
-label `claude-loop` added, or any push to the PR branch
-        │  pull_request: labeled / synchronize
-        ▼
-  claude-reviewer.yml ── runs the tests, checks the claims, posts ONE review "[reviewer] …"
-        │  request changes ──► coder            approve ──► loop ends
-        ▼
-  claude-coder.yml ── fixes on the PR branch, pushes, replies "[coder] <hash> …"
-        │  same run, second job: the reviewer workflow is called ──► reviewer again
-        ▼
-  after MAX_ROUNDS (5) request-changes rounds both stop and leave it to a human
+| Where | What it means |
+|---|---|
+| 👀 on your comment | The coder picked it up. No 👀 within a few minutes means nothing is running; see "When things go wrong". |
+| `[reviewer] …` review | The reviewer's verdict: "request changes" with a numbered list, or "approve". A `For a human:` note lists what only a person can do (PR title or description, a design choice); it never blocks. |
+| `[coder] …` comment | The coder's answer: the commit hash, then each request with what was done or why not. Inline comments also get a `[coder]` reply in their own thread. |
+| `claude-loop` status check | The loop's state on the head commit: pending while an agent works or changes are open, green when the reviewer approved, red on a failure or at the round cap. It links to the run. |
+| `[loop] ❌ …` comment | An agent run failed. It names the cause, what to do and how to retry, with the agent's own error text. |
+| `[loop] ⚠️ …` comment | The watchdog or the round cap: a comment nobody picked up, a loop that stalled, or the cap reached. |
+| `claude-loop:error` label | Something needs a human now. It clears by itself when an agent run succeeds again. |
 
-  a team member's comment or review on the PR also goes straight to the coder
-```
+`[coder]`, `[reviewer]` and `[loop]` at the very start of a post are how the workflows tell the agents apart: both agents post as `claude[bot]`, and `[loop]` messages come from the workflows themselves.
 
-Both agents post as `claude[bot]`, so the workflows tell them apart by the `[coder]` and `[reviewer]` markers at the start of every post. The coder never reacts to `[coder]` posts or to approvals; the reviewer only reacts to pushes. Copilot's review is treated like a human review (its inline comments are ignored individually, since its review event already fires once).
+## Set up a repository
 
-## Finish the setup (once per repository)
+You need admin rights on the repository.
 
-1. **Install the Claude GitHub App** on this repository: https://github.com/apps/claude (repository admin required). The action uses its Contents, Issues and Pull requests permissions to push, comment and review. Alternatively run `/install-github-app` inside Claude Code in this checkout; choose "Skip for now" when it offers to write a workflow, since the workflows here are already in place.
-2. **Create the subscription token and store it as a secret.** On your laptop, `claude setup-token` prints a long-lived OAuth token bound to your Claude subscription. Store it as the repository secret `CLAUDE_CODE_OAUTH_TOKEN`; the workflows pass it as `claude_code_oauth_token`, so runs use your Pro/Max/Team usage windows, not API credits. Three ways to store it, none of which puts the token in the repository:
-
-   - **GitHub web UI, no CLI needed.** Repository → Settings → Secrets and variables → Actions → New repository secret; name `CLAUDE_CODE_OAUTH_TOKEN`, paste the token, Add secret. This is the simplest route when `gh` is not logged in.
-   - **`gh` with a scoped personal token, no `gh auth login`.** Create a fine-grained personal access token at https://github.com/settings/personal-access-tokens/new with access to this repository only and one repository permission, **Secrets: read and write** (nothing else), and a short expiry. Then:
+1. **Install the Claude GitHub App** on the repository: https://github.com/apps/claude. The action uses its Contents, Issues and Pull requests permissions to push, comment and review. Alternatively run `/install-github-app` inside Claude Code in a checkout; choose "Skip for now" when it offers to write a workflow, since the workflows here are already in place.
+2. **Create the subscription token and store it as a secret.** On your laptop, `claude setup-token` prints a long-lived OAuth token bound to your Claude subscription. Store it as the repository secret `CLAUDE_CODE_OAUTH_TOKEN`; the workflows pass it as `claude_code_oauth_token`, so runs use your Pro, Max or Team usage windows, not API credits. Three ways to store it, none of which puts the token in the repository:
+   - **GitHub web UI, no CLI needed.** Repository → Settings → Secrets and variables → Actions → New repository secret; name `CLAUDE_CODE_OAUTH_TOKEN`, paste the token, Add secret.
+   - **`gh` with a scoped personal token, no `gh auth login`.** Create a fine-grained personal access token at https://github.com/settings/personal-access-tokens/new for this repository only, with the single repository permission **Secrets: read and write** and a short expiry. Then:
      ```bash
      read -rs GH_TOKEN && export GH_TOKEN          # paste the personal token; nothing echoes, nothing in history
-     read -rs T && printf '%s' "$T" | gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo hoprnet/agent-demo   # paste the Claude token
+     read -rs T && printf '%s' "$T" | gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo OWNER/REPO   # paste the Claude token
      unset GH_TOKEN T
      ```
-     `gh secret set` encrypts the value with the repository's public key before it leaves your machine; the personal token can be deleted afterwards.
-   - **`gh auth login`** (browser device flow, about a minute), then `gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo hoprnet/agent-demo` and paste when asked. `/install-github-app` inside Claude Code also stores the secret for you, but it requires this login as well.
+     `gh secret set` encrypts the value with the repository's public key before it leaves your machine. Delete the personal token afterwards.
+   - **`gh auth login`** (browser device flow), then `gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo OWNER/REPO` and paste when asked.
 
-   Why this is safe on a public repository: Actions secrets are encrypted at rest and cannot be read back through the API or the UI once saved. They are masked in workflow logs and withheld from workflows that pull requests from forks trigger. Keep the token out of every file under the repository, out of workflow `env:` literals and out of commit messages. Do not set `ANTHROPIC_API_KEY` as well; the workflows never reference it. The token is personal: it bills the subscription of whoever ran `claude setup-token`, so for a team pick the account whose allowance should pay. It can only make model requests: it is not a claude.ai login and cannot read conversations or account settings. If it ever leaks, revoke it in that account's claude.ai settings (or through Anthropic support), run `claude setup-token` again and replace the secret.
-
-3. **Create the label** the loop is switched on with, `claude-loop`. Any of:
-   - **Web UI:** repository → Issues → Labels → New label; name `claude-loop`, colour `5319E7`, description "Claude coder + reviewer agents act on this PR". Or create it inline the first time you apply it: on a pull request, the Labels gear in the sidebar offers "Create new label" when you type a name that does not exist yet.
-   - **`gh` with the scoped personal token from step 2** (add the repository permission **Issues: read and write**, which is what labels need), no login:
-     ```bash
-     export GH_TOKEN=...   # or read -rs GH_TOKEN as above
-     gh label create claude-loop --repo hoprnet/agent-demo --color 5319E7 --description "Claude coder + reviewer agents act on this PR"
-     ```
-   - **Plain `curl`** with the same token:
+   This is safe on a public repository: Actions secrets are encrypted at rest, cannot be read back once saved, are masked in logs, and are withheld from workflows that pull requests from forks trigger. Keep the token out of every file, workflow `env:` literal and commit message, and do not also set `ANTHROPIC_API_KEY`; the workflows never use it. The token bills the subscription of whoever ran `claude setup-token`, so for a team pick the account whose allowance should pay. It can only make model requests: it is not a claude.ai login and cannot read conversations or account settings. If it leaks, revoke it in that account's claude.ai settings (or through Anthropic support), run `claude setup-token` again and replace the secret.
+3. **Create the label `claude-loop`**, in any of these ways:
+   - Web UI: Issues → Labels → New label. Or type the name in a PR's Labels picker and choose "Create new label".
+   - With the scoped token from step 2 plus the permission **Issues: read and write**: `gh label create claude-loop --repo OWNER/REPO --color 5319E7 --description "Claude coder + reviewer agents act on this PR"`.
+   - With `curl` and the same token:
      ```bash
      curl -sS -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-       https://api.github.com/repos/hoprnet/agent-demo/labels \
+       https://api.github.com/repos/OWNER/REPO/labels \
        -d '{"name":"claude-loop","color":"5319E7","description":"Claude coder + reviewer agents act on this PR"}'
      ```
-   - **`gh auth login`**, then the `gh label create` line above.
+   The error label `claude-loop:error` creates itself the first time it is needed.
+4. **Check that Actions are enabled** (Settings → Actions → General: allow all actions, or at least `anthropics/*` and `actions/*`). The jobs declare their own permissions, so the default `GITHUB_TOKEN` setting can stay read-only.
+5. **Push the files to the default branch.** Workflows only run once they exist there.
 
-4. **Check Actions are enabled** for the repository (Settings, Actions, General: allow all actions, or at least `anthropics/*` and `actions/*`). The jobs declare their own permissions, so the default `GITHUB_TOKEN` setting can stay read-only.
-5. **Push this repository** (`git push origin main`). Workflows only trigger once they exist on the default branch.
+Both agents run on Claude Opus 5.5 (`--model claude-opus-5-5` in each workflow's `claude_args`); change that line to use another model. A `CLAUDE.md` with project conventions is read by the action, as `AGENTS.md` is.
 
-Both agents run on Claude Opus 5.5 (`--model claude-opus-5-5` in each workflow's `claude_args`); change that line to move them to another model. Optional: add a `CLAUDE.md` with project conventions; the action reads it, as it reads `AGENTS.md`.
+## Daily use
 
-## Run the proof of concept
+- **Follow a PR:** add the `claude-loop` label (sidebar, or `gh pr edit N --add-label claude-loop`). The reviewer starts at once. Comments that were already on the PR are handled too: if the reviewer approves while a request is still unanswered, it starts the coder itself.
+- **Ask for something:** comment on the PR, in the conversation or on a line. One comment can hold several requests. A burst of comments is handled by one coder run. Only repository owners, organisation members and collaborators can drive the loop; other people's comments are ignored.
+- **Change your mind:** say so in a new comment. The newest instruction from a team member settles a design question; an agent that argued the opposite before says so once and then follows you.
+- **Push yourself:** fine at any time. The reviewer checks your push. If the coder is pushing at the same moment, it rebases onto your commit.
+- **Stop:** remove the label. Nothing runs on the PR after that.
+- **Round cap:** the reviewer requests changes at most 5 times per label (`MAX_ROUNDS` in both workflows). Then it posts its remaining findings as a comment, the status turns red and a `[loop]` message says a human decides. Remove and re-add the label to allow another 5 rounds. Your own comments still reach the coder after the cap.
+- **Copilot reviews:** if Copilot review is enabled, the coder handles its findings like a human review. GitHub starts no workflow for a Copilot review, so the watchdog hands it to the coder on its next run (15 to 30 minutes, or sooner with any comment).
+- **Run an agent by hand:** Actions tab → `claude-coder` or `claude-reviewer` → Run workflow → PR number.
 
-Nothing here needs `gh`: `git` over your SSH key and the GitHub web pages are enough. Where a `gh` one-liner exists it is given as an aside for people who are logged in.
+## When things go wrong
 
-1. **Branch, break something, push.**
-   ```bash
-   git checkout -b poc/mean-bug
-   sed -i 's|return sum(values) / len(values)|return sum(values) / (len(values) + 1)|' demo/calc.py
-   git commit -am "poc: introduce an off-by-one in mean()"
-   git push -u origin poc/mean-bug
-   ```
-2. **Open the pull request** on the web: go to https://github.com/hoprnet/agent-demo/compare/poc/mean-bug?expand=1 (the repository page also shows a "Compare & pull request" banner for the branch you just pushed), keep `main` as the base, and create it. (`gh pr create --fill --repo hoprnet/agent-demo` does the same.)
-3. **Follow the PR:** on the pull request page, click the gear next to **Labels** in the right-hand sidebar and pick `claude-loop` (or type the name and choose "Create new label" if it does not exist yet). (`gh pr edit <number> --add-label claude-loop`.) Adding the label fires the reviewer: it runs the tests, finds `test_mean` failing and requests changes with a numbered item naming `demo/calc.py`; that review fires the coder, which fixes the line, pushes, and replies `[coder] <hash> …`; the push fires the reviewer again, which approves. Expect three runs of a few minutes each.
-4. **Try the other entry point:** in the pull request's conversation, write a comment such as "add a `subtract(a, b)` with a test" and post it. The coder acts on it, the reviewer checks the push. Any organisation member or collaborator with write access can do this; no `@claude` mention is needed on a labelled PR.
-5. **Watch** under the repository's **Actions** tab (workflows `claude-coder` and `claude-reviewer`; each run's log shows what Claude read and ran) and in the pull request's timeline, where the `[coder]` comments and `[reviewer]` reviews land. If a run finishes in seconds with nothing posted, the PR branch's workflow files differ from `main`'s; see "Two GitHub details the workflows work around" below.
-6. **Stop following:** remove the label from the same sidebar gear (`gh pr edit <number> --remove-label claude-loop`). Nothing runs on the PR after that. Re-adding it starts a new round, which is also how you continue after the round cap.
+Every failure is meant to be visible on the PR within minutes, with the cause and the fix. What you see and what to do:
 
-## Follow a new pull request
+| What you see | Cause | What to do |
+|---|---|---|
+| `[loop] ❌ … Claude authentication failed` | The token secret is invalid, expired or revoked. | Run `claude setup-token` and replace the `CLAUDE_CODE_OAUTH_TOKEN` secret. |
+| `[loop] ❌ … Claude usage limit or rate limit reached` | Your subscription's five-hour or weekly window is used up. | Wait for the reset, then post any comment; the coder picks up everything unanswered. |
+| `[loop] ❌ … the Claude API was overloaded` | A temporary problem on Anthropic's side. | Retry in a few minutes with a comment. |
+| `[loop] ❌ … the agent hit its turn limit` | The request needed more than 80 agent turns. | Split it into smaller comments, or raise `--max-turns`. |
+| `[loop] ❌ … the agent step hit its time limit` | The agent ran past 30 minutes (coder) or 18 (reviewer). | Split the request, or raise `timeout-minutes`. |
+| `[loop] ❌ … the workflow files on this PR branch differ from main` | The Claude action refuses to run workflow files that differ from the default branch (see "GitHub details the workflows work around"). | Merge the default branch into the PR branch and push; put workflow changes in their own PR. |
+| `[loop] ❌ … no Claude token available to this run` | The secret is missing, or the PR comes from a fork (forks never get secrets). | Add the secret; for forks, pull the change into a branch of this repository. |
+| `[loop] ❌ … the agent finished without posting its reply` | The agent could not post; the run summary lists refused tool calls. | Open the run; extend `--allowedTools` if a needed command was refused. |
+| `[loop] ⚠️ no agent picked up a comment within 10 minutes` | GitHub Actions is down or delayed, or the `claude-coder` workflow is disabled. | Check githubstatus.com and the Actions tab; once it runs again, post any comment. |
+| `[loop] ⚠️ the loop has been waiting since …` | A run died without reporting (lost runner, job-level timeout), or a hand-off event was lost while a workflow was disabled. | Post a comment or re-add the label. |
+| `[loop] ⚠️ the head commit … has had no review` | The `claude-reviewer` workflow is disabled, or Actions was down during a push. | Re-add the label. |
 
-Add the `claude-loop` label, from the pull request's sidebar or with `gh pr edit <number> --add-label claude-loop`. That is the whole procedure: the workflows live in the repository once and apply to every PR that carries the label. The label starts the reviewer at once; its first review brings in the coder, which then also answers any comments that were already on the PR. Remove the label to stop; re-add it to continue after the round cap. The label is visible in the PR list, so you can see which PRs are under the loop.
+Each `[loop] ❌` message ends with the retry action for that agent: a comment re-runs the coder, and re-adding the label (or running `claude-reviewer` by hand) re-runs the reviewer.
 
-For a one-off without subscribing, the interactive form still works: comment `@claude …` on any PR (the coder workflow's `issue_comment` trigger runs only for labelled PRs, so add a plain `@claude` workflow from https://github.com/anthropics/claude-code-action/blob/main/examples/claude.yml if you want that too).
+The last three rows come from the **watchdog** workflow. It uses no Claude, only the repository token, and runs every 15 minutes and on demand. It covers what a failing run cannot report about itself, and it hands Copilot reviews to the coder. Two limits are worth knowing:
 
-## How the coder trigger works
+- GitHub runs schedules late or skips them under load (in testing, two of three 15-minute slots were skipped), so detection can take 30 minutes or more. Public repositories also have their schedules disabled after 60 days without activity.
+- During a complete GitHub Actions outage the watchdog cannot run either. The only signal then is the missing 👀 on your comment. Once Actions recovers, the watchdog reports the stalled PRs.
 
-`.github/workflows/claude-coder.yml` listens to three events: `issue_comment` (a comment in the PR conversation), `pull_request_review_comment` (an inline comment) and `pull_request_review` (a submitted review, which is also how Copilot posts). It does not run on the label event; the reviewer does, and its first review brings the coder in, so the two never race on a freshly labelled PR. The job's `if:` gate decides before the action starts:
+## How it works
 
-- the PR must carry `claude-loop` (for `issue_comment` the labels are on `github.event.issue`);
-- posts whose body starts with `[coder]` never trigger it (its own replies); the check is on the first characters, so a review that merely quotes "[coder]" still counts;
-- a bot actor triggers it only when the body starts with `[reviewer]` or the actor is Copilot;
-- inline review comments count only from humans, so one Copilot review fires one run, not one per inline comment;
-- an approving review never triggers it;
-- a human-authored event counts only when its author is a repository owner, a member of the organisation or a collaborator (`author_association`), so comments from strangers on a public repository never start a job. Labels need triage permission anyway, and fork PRs get no secrets, so outsiders cannot spend the subscription; team members can trigger as often as they like.
+```
+label added, or a human pushes            a team member comments or reviews
+            │                                        │
+            ▼                                        ▼
+   claude-reviewer ◄──── second job ──── claude-coder ── fixes, pushes, replies [coder]
+   runs tests, posts ONE review          when it pushed      ▲
+            │                                                 │
+            ├── request changes ──────────────────────────────┘
+            ├── approve, but a request is unanswered ── dispatch ──┘
+            └── approve ──► done (status green)
+```
 
-Inside the action, `allowed_bots: "claude[bot],copilot-pull-request-reviewer[bot]"` lets those two bots through the action's own human-actor check (which otherwise rejects every bot to prevent loops). A step before the action counts `[reviewer]` request-changes reviews and stops at `MAX_ROUNDS`, posting a `[coder]` note instead of running. A job-level `concurrency` group queues runs per PR so two comments in a row do not race on the same branch. The group sits on the job, not the workflow, for a reason: GitHub keeps only one queued run per group, and a workflow-level group would let a run the `if:` gate is about to skip (another bot's comment, the coder's own reply) cancel the queued run that matters. The prompt tells the coder what to read, how to commit and push (`git push origin HEAD` to the PR branch it checked out with `gh pr checkout`), and how to reply; the `--allowedTools` list is the hard limit on what it can run.
+**The coder** (`.github/workflows/claude-coder.yml`) listens to PR comments, inline review comments, submitted reviews and `workflow_dispatch`. A gate decides before any runner starts: the PR must be open and labelled; human events count only from owners, organisation members and collaborators; bot events count only for the reviewer's `[reviewer]` reviews (not approvals) and Copilot's reviews; `[coder]` posts never trigger it. Then, per run:
 
-## How the reviewer trigger works
+1. A precheck without Claude lists the requests newer than the coder's last `seen-until` watermark (the line it ends every summary with). Nothing new means the run ends there, so duplicate and coalesced triggers cost no subscription.
+2. 👀 on every comment the run will handle, and a pending `claude-loop` status.
+3. The round cap guard, then the agent with an exact tool allow-list, a 30-minute step limit and 80 turns.
+4. A run summary on the Actions page (turns, time, API-equivalent cost, every refused tool call) and a postcondition: no `[coder]` reply means the run failed.
+5. If the branch moved, a second job in the same run calls the reviewer. A push made from inside a workflow cannot start another workflow by event: GitHub holds that run for approval. Those held duplicate runs are deleted automatically.
+6. On any failure, the job diagnoses itself (which step failed, the agent's error text, how long it ran), and a `report` job posts the `[loop] ❌` message, turns the status red and adds the error label.
 
-`.github/workflows/claude-reviewer.yml` listens to `pull_request: synchronize` (a push to the PR branch) and `labeled`, plus `workflow_dispatch` for a manual run by PR number, and it is callable (`workflow_call`) so the coder's run can chain it after a push. Pushes by the coder arrive as `claude[bot]`, hence `allowed_bots: "claude[bot]"`. Both workflows install `pytest` first (the GitHub runner image has python but not pytest). The reviewer checks out the PR head, has read-only tools plus `python -m pytest` and `gh pr review`, and must post exactly one review: request changes with a numbered list of things the coder can do, approve, or, at the round cap, a plain comment that ends the loop. Anything only a human can do (the PR description, closing the PR, a design decision) goes under a `For a human:` note and never by itself blocks approval, so the loop does not spend rounds on items it cannot resolve. `cancel-in-progress: true` drops a review of a commit that has already been superseded by a newer push.
+**The reviewer** (`.github/workflows/claude-reviewer.yml`) runs on the label, on human pushes, by hand, and as the coder's second job. It skips a head it already reviewed since the label, reviews with read-only tools plus the tests, and must post exactly one `[reviewer]` review. Unanswered human requests are the coder's work in progress: the reviewer names them in one line and does not block on them. It records its outcome as the `claude-loop` status of the exact commit it reviewed, and on an approval with requests still open it dispatches the coder.
 
-## Migrate to another repository
+**Concurrency:** one coder run per PR at a time; a burst of events coalesces into one waiting run, and the replaced runs end without calling Claude. A newer push cancels a review in progress. Different PRs run fully in parallel.
 
-1. Copy `.github/workflows/claude-coder.yml`, `.github/workflows/claude-reviewer.yml` and `AGENTS.md`.
-2. In both workflows replace `python -m pytest` in the prompts and in `--allowedTools` with the repository's test command, and add any build or lint commands the agents may run to `--allowedTools` (nothing else is allowed).
-3. Adjust `AGENTS.md`: keep the markers, the one-review rule and the cap; add the repository's own rules.
-4. Install the Claude GitHub App on that repository, add the `CLAUDE_CODE_OAUTH_TOKEN` secret (a repository secret, or one organisation secret shared with selected repositories, remembering it bills one person's subscription), create the `claude-loop` label, push.
-5. To keep the procedure in one place for many repositories, move the two workflows into a `claude-loop` repository as a reusable workflow (`on: workflow_call`) and give each repository a ten-line caller with the same `on:` block and `uses: <org>/claude-loop/.github/workflows/pr-loop.yml@main` plus `secrets: inherit`. Changing the procedure then changes it everywhere at once.
+**Timeouts:** every job has `timeout-minutes`, each agent step has its own limit, and every GitHub API call in `loop.sh` has a 60-second timeout with three attempts (client errors other than 429 fail at once).
 
-## Two GitHub details the workflows work around
+**The shared logic** lives in `.github/claude-loop/loop.sh`: prechecks, round counting, statuses, reactions, postconditions, diagnosis, reports and the watchdog. Every job loads it from the default branch, so a pull request cannot change the loop's own behaviour.
 
-- **A workflow's own push cannot wake another workflow.** GitHub attributes a push made from inside a workflow run to `github-actions[bot]`, whatever token the action used and however the commit is authored, and holds the `pull_request` run that push would trigger for manual approval (`action_required` in the Actions tab, until someone clicks "Approve and run"). So the coder's pushes never reach the reviewer through an event. Instead the coder workflow runs the reviewer as a second job of the same run (`workflow_call` into `claude-reviewer.yml`), only when the coder actually pushed. The standalone reviewer workflow still covers the label event and human pushes. A held duplicate run may still appear after a coder push; it can be ignored or approved, it reviews the same commit. Both workflows also set `bot_id: "209825114"` and `bot_name: "claude[bot]"`, the Claude GitHub App's own bot user, so the coder's commits are at least attributed to `claude[bot]` rather than to `github-actions[bot]`.
-- **Workflow identity on `pull_request` events.** On these events (the reviewer's triggers) GitHub runs the workflow file as it is on the **PR branch**, and the Claude Code GitHub Action then refuses to start unless that file is byte-identical to the copy on the default branch. The run still shows green, with "Skipping action due to workflow validation" in the step log, and nothing happens. Two consequences:
-  - A PR branch created before a change to `.github/workflows/` must be brought up to date before the loop works on it: `git checkout <branch> && git pull && git merge main && git push`. The push itself fires the reviewer.
-  - A PR that itself edits the workflow files never runs the agents on `pull_request` events; the coder's comment triggers use the default branch's copy and keep working. Change the workflows on `main` (or a PR whose only purpose is that change), not inside a PR the agents are meant to work on. AGENTS.md already forbids the coder to touch them.
+## GitHub details the workflows work around
+
+- **A workflow's own push cannot wake another workflow.** GitHub attributes a push made from inside a workflow run to `github-actions[bot]` and parks the `pull_request` run it would trigger as "action required". That is why the reviewer runs as the coder's second job, and why the parked duplicates are deleted. Both workflows also set `bot_id: "209825114"` and `bot_name: "claude[bot]"`, so the coder's commits are attributed to the Claude App's own bot user.
+- **Runs started by a workflow have a bot as actor.** A coder run the reviewer dispatches, and the review chained into it, are started by `github-actions[bot]`. The Claude action refuses bot actors unless they are listed, so both workflows list it in `allowed_bots`, next to `claude[bot]` (and Copilot for the coder).
+- **Copilot reviews start no workflow.** A Copilot review is produced by an Actions run of its own, and like a workflow's own push it triggers nothing. The watchdog therefore looks for Copilot reviews the coder has not answered and dispatches the coder.
+- **Workflow identity.** On `pull_request` events the Claude action refuses to start unless the workflow file on the PR branch is identical to the default branch's. The loop reports this as a failure with the fix. After changing the workflows on the default branch, merge it into open PR branches: `git checkout BRANCH && git pull && git merge main && git push`. Keep workflow changes out of PRs the agents work on; `AGENTS.md` forbids the coder to touch them.
+
+## Use it in another repository
+
+1. Copy `.github/workflows/claude-coder.yml`, `.github/workflows/claude-reviewer.yml`, `.github/workflows/claude-loop-watchdog.yml`, `.github/claude-loop/loop.sh` and `AGENTS.md`.
+2. In the coder and reviewer workflows, replace `python -m pytest` in the prompts and in `--allowedTools` with the repository's test command, and add its build or lint commands to `--allowedTools` (nothing else is allowed). Drop the "Install the test tooling" step or replace it with the project's setup.
+3. Adjust `AGENTS.md`: keep the markers, the one-review rule, the cap and the human-only rule; add the repository's own rules.
+4. Follow "Set up a repository": the Claude App, the `CLAUDE_CODE_OAUTH_TOKEN` secret, the `claude-loop` label, push. The first PR you label is the smoke test: expect a review, a green or pending status, and 👀 on your comments.
+5. For many repositories, keep one copy of the procedure: move the three workflows into a shared repository as reusable workflows (`on: workflow_call`) and give each repository short caller workflows with the same triggers and `secrets: inherit`.
 
 ## Cost and limits
 
-- Every run spends your subscription's five-hour and weekly usage windows, shared with your interactive sessions. The design keeps runs to one per event and caps the rounds; if a PR eats the allowance, lower `MAX_ROUNDS` or remove the label.
-- The runners are GitHub-hosted. Anything that needs your own machine (a test host, a long measurement) is out of reach here; put those steps on a self-hosted runner (`runs-on: self-hosted` on a machine where `claude` is logged in also bills the subscription) or leave them to an interactive session, and have the coder say "needs a host run" instead.
-- Branch protection that forbids pushes from apps blocks the coder's push; the run then fails visibly. The App cannot approve a PR it opened itself, so keep PRs human-opened for the reviewer's approval to count.
-- Comment-triggered runs need the commenter to have write access (the action's own check) and to be an owner, member or collaborator (the workflow's gate). To let outside contributors drive the coder, widen the gate's `author_association` list and set the action's `allowed_non_write_users`.
+- Every agent run spends your subscription's five-hour and weekly windows, shared with your interactive Claude Code sessions. In testing, a typical round (one review, one coder run, one chained review) took two to four minutes of agent time. The prechecks keep coalesced and duplicate triggers free; the round cap bounds a stubborn PR; the run summary shows turns and an API-equivalent cost per run.
+- The runners are GitHub-hosted. Anything that needs your own machine (a test host, long measurements) belongs on a self-hosted runner (`runs-on: self-hosted` on a machine where `claude` is logged in also bills the subscription), or in an interactive session.
+- Branch protection that forbids pushes from apps blocks the coder's push; the failure report says so. The Claude App cannot approve a PR it opened, so keep PRs human-opened for the reviewer's approval to count.
+- Organisation-wide bots (CodeRabbit, Augment and the like) comment on every PR. The gate ignores them, and each ignored event costs only a skipped job.
+
+## How this was tested
+
+The toolchain was built and tested on this repository's pull requests #1 to #12 in one night. What each test showed:
+
+| Test | Result |
+|---|---|
+| Subtle bugs on a green test suite (docstring vs. code, untested edge cases, a test that pins a bug) | The reviewer found every one by reading the code; the coder fixed code and tests; approved in one or two rounds. |
+| One comment with three different requests; a follow-up that changes an earlier request | All handled in one run each; the newest instruction won; a question got an answer, not a code change. |
+| A review with three inline comments, two of them garbled | One coder run; sensible reading of the garbled ones from their lines; threaded replies; the reviewer flagged the ambiguity as a human question. |
+| A burst of three comments in three seconds | One coder run handled all three; the replaced runs cost nothing and reported nothing. |
+| A human push while the coder was working | The coder's push was rejected; it rebased, re-ran the tests and pushed; the reviewer confirmed the history. |
+| Two PRs at once | Two independent loops, both approved within three minutes. |
+| Label removed, comment posted, label re-added | No run while unlabelled; after re-labelling the comment was answered (by the reviewer's dispatch, or by hand from the Actions tab). |
+| Round cap (temporarily 0) | Findings posted as a comment, `[loop]` cap message, red status, error label. |
+| Invalid token | `[loop] ❌ Claude authentication failed` with the agent's own 401 text and the fix. |
+| Turn limit (temporarily 2) and step timeout (temporarily 1 minute) | Classified precisely, with the remedy; no partial pushes. |
+| `claude-coder` workflow disabled (stand-in for an Actions outage) | Watchdog incident after 10 minutes; after re-enabling, one comment brought the loop back and it caught up on everything unanswered, including a request whose earlier run had timed out. |
+| A PR that edits a workflow file | `[loop] ❌ … the workflow files on this PR branch differ from main`, with the fix; after the fix the reviewer ran normally and the error label cleared. |
+| A hand-off lost while a workflow was disabled | Watchdog stall report after 30 minutes; one comment resumed the loop. |
+| Copilot review requested through the API | No workflow started by GitHub; the watchdog dispatched the coder, which answered it. |
+| Final run on the final `main` (PR #12) | Bug found on a green suite, fixed, approved; an inline comment answered in its thread with a commit; approved again. |
+
+Faults the tests found, each fixed in its own commit:
+
+- A comment on a closed but still labelled PR started a run.
+- GitHub reports an approval's `commit_id` as the current head, so "already reviewed" is now read from per-commit statuses.
+- A failure report cannot read the failing job's log from inside the same run, so jobs now diagnose themselves.
+- The round cap was off by one.
+- Held duplicate runs cannot be cancelled, only deleted.
+- A PR's merge ref could carry an outdated `loop.sh`.
+- Dispatched runs failed the action's bot-actor check until `github-actions[bot]` was allowed.
+- Copilot reviews start no workflow, so the watchdog relays them.
 
 ## Files
 
-- `.github/workflows/claude-coder.yml`, `.github/workflows/claude-reviewer.yml`: the two agents.
-- `AGENTS.md`: the procedure both follow.
-- `demo/calc.py`, `tests/test_calc.py`: a tiny module and its tests for the proof of concept.
+- `.github/workflows/claude-coder.yml`: the coding agent, its chained review and its failure report.
+- `.github/workflows/claude-reviewer.yml`: the review agent and its failure report.
+- `.github/workflows/claude-loop-watchdog.yml`: the watchdog.
+- `.github/claude-loop/loop.sh`: the shared logic without Claude.
+- `AGENTS.md`: the procedure both agents follow.
+- `demo/calc.py`, `tests/test_calc.py`: a tiny module and its tests, the material for test pull requests.
