@@ -132,6 +132,8 @@ The `claude-vpn-test` workflow has an agent install, connect and check Gnosis VP
 
    Without `VPN_TEST_KNOWN_HOSTS` the run accepts the host key it first sees and says so in a warning. The host address stays in secrets: it is masked in logs and replaced by `<test machine>` in the report.
 
+5. **Install and fund the client once, by hand.** The workflow never funds a node, because faucet codes are single-use and must not land in logs. An unfunded client stays in `PreparingSafe` and the test stops before connecting; in the self-test a fresh install asked for 241 wxHOPR and 0.005 xDai. Install with the `test-gnosis-vpn` skill in an interactive session (or tick `install` on the first run), fund the node address from `gnosis_vpn-ctl status` as the skill describes, and later runs reuse that identity.
+
 ### Run a test
 
 - **From the Actions tab:** `claude-vpn-test` → Run workflow. Inputs: the PR to report on, whether to install the client first, the release channel, and an exit to connect to (empty means the first ready one).
@@ -257,6 +259,7 @@ The toolchain was built and tested on this repository's pull requests #1 to #13.
 | Two VPN tests dispatched at once | The second waited in the concurrency group and started after the first had finished. |
 | 30 testers taking the host lock in the same second, free and stale | Exactly one winner each time; wrong-owner release refused; a silent lock taken over after its stale time. |
 | VPN test self-test (the runner plays the machine) | SSH, host lock, guards, agent with `test-gnosis-vpn`, teardown and lock release all ran; `[vpn-test] PASS (self-test)` posted. The first attempt found a guard install that failed for a non-root SSH user, now fixed. |
+| VPN test self-test with `install` | The official installer put `gnosisvpn` on the runner; the client started, reported status and balance, and stopped cleanly with no kill switch table left; the report named the missing funding. No refused tool calls. |
 | Final run on the final `main` (PR #12) | Bug found on a green suite, fixed, approved; an inline comment answered in its thread with a commit; approved again. |
 
 Faults the tests found, each fixed in its own commit:
