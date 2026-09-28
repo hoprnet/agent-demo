@@ -154,7 +154,7 @@ after_review() {
   case "$st" in
     APPROVED) status "$pr" success "approved by the reviewer" "$sha"; clear_error "$pr" ;;
     CHANGES_REQUESTED) status "$pr" pending "changes requested (round $((n + 1)) of $max); coder is next" "$sha"; clear_error "$pr" ;;
-    COMMENTED) status "$pr" failure "round cap reached ($max); a human decides" "$sha"; mark_error "$pr" ;;
+    COMMENTED) cap "$pr" "$n" "$max"; status "$pr" failure "round cap reached ($max); a human decides" "$sha" ;;
   esac
 }
 

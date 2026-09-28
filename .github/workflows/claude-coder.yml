@@ -108,7 +108,9 @@ jobs:
           n=$("$RUNNER_TEMP/loop.sh" rounds "$PR")
           echo "n=$n" >> "$GITHUB_OUTPUT"
           echo "reviewer rounds since the label: $n of $MAX_ROUNDS"
-          if [ "$n" -ge "$MAX_ROUNDS" ]; then
+          # the coder works on up to MAX_ROUNDS change requests; at the cap the reviewer comments instead of
+          # requesting changes, so this guard only fires if more change requests than that arrive anyway
+          if [ "$n" -gt "$MAX_ROUNDS" ]; then
             "$RUNNER_TEMP/loop.sh" cap "$PR" "$n" "$MAX_ROUNDS"
             echo "capped=true" >> "$GITHUB_OUTPUT"
           else
