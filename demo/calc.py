@@ -15,3 +15,8 @@ def mean(values: list[float]) -> float:
     if not values:
         raise ValueError("mean of an empty list")
     return sum(values) / len(values)
+
+
+def geometric_mean(values: list[float]) -> float:
+    """n-th root of the product of n positive values."""
+    return sum(values) ** (1 / len(values))
