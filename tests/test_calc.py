@@ -1,3 +1,5 @@
+import doctest
+
 import pytest
 
 from demo import calc
@@ -30,3 +32,9 @@ def test_geometric_mean():
         calc.geometric_mean([0, 4])
     with pytest.raises(ValueError):
         calc.geometric_mean([-4, 1])
+
+
+def test_doctests():
+    result = doctest.testmod(calc)
+    assert result.attempted > 0
+    assert result.failed == 0
