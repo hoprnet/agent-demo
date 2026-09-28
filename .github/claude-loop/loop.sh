@@ -331,7 +331,11 @@ watchdog() {
   prs=$(ghx api "repos/$R/pulls?state=open&per_page=100" --jq ".[] | select(any(.labels[]; .name == \"$LABEL\")) | .number")
   for pr in $prs; do
     log "checking PR #$pr"
-    local since comments inline unacked sha st
+    local since comments inline unacked sha st bots
+    # Copilot's reviews start no workflow (its review is itself produced by an Actions run), so the coder never
+    # hears about them through an event; hand them over here
+    bots=$(coder_requests "$pr" | jq '[.[] | select(.by | startswith("copilot"))] | length')
+    if [ "$bots" -gt 0 ]; then log "PR #$pr: $bots Copilot review(s) the coder has not answered"; [ -n "${DRY_RUN:-}" ] || kick_coder "$pr"; continue; fi
     since=$(label_time "$pr")
     comments=$(list "repos/$R/issues/$pr/comments")
     inline=$(list "repos/$R/pulls/$pr/comments")
