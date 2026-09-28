@@ -93,6 +93,92 @@ The last three rows come from the **watchdog** workflow. It uses no Claude, only
 - GitHub runs schedules late or skips them under load (in testing, two of three 15-minute slots were skipped), so detection can take 30 minutes or more. Public repositories also have their schedules disabled after 60 days without activity.
 - During a complete GitHub Actions outage the watchdog cannot run either. The only signal then is the missing 👀 on your comment. Once Actions recovers, the watchdog reports the stalled PRs.
 
+## Skills
+
+The agents load four public Claude Code skills as plugins, through the action's `plugin_marketplaces` and `plugins` inputs. Each run installs them fresh, so an update to a skill reaches the next run.
+
+| Skill | Marketplace | Used by | For |
+|---|---|---|---|
+| `unslop` | `kauki-skills` (https://github.com/Teebor-Choka/skills) | coder, reviewer, VPN test | Checking every comment, review and prose edit for machine-written tells. |
+| `write-clear-explainers` | `seb-ai-skills` (https://github.com/SCBuergel/seb-ai-skills) | coder, reviewer, VPN test | Writing posts and docs that a reader who did not watch the run can follow. |
+| `hopr-debug` | `kauki-skills` | coder, reviewer, VPN test | Loaded when a change or a failure concerns HOPR sessions, SURBs, channels or relays. |
+| `test-gnosis-vpn` | `seb-ai-skills` | VPN test | The procedure for testing Gnosis VPN on a remote machine without losing SSH. |
+
+The prompts say when to load each one, and `Skill` is in every agent's `--allowedTools`. The run summary lists the skills a run used, for example `loop: skills used: unslop:unslop, write-clear-explainers:write-clear-explainers`. To add a skill, add its marketplace and `name@marketplace` to the two inputs in each workflow and say in the prompt when to use it.
+
+## Test Gnosis VPN on a machine
+
+The `claude-vpn-test` workflow has an agent install, connect and check Gnosis VPN on a cloud machine you own, following the `test-gnosis-vpn` skill, and posts a `[vpn-test] PASS` or `[vpn-test] FAIL` report on the PR. It is separate from the coder and reviewer loop and never edits the repository.
+
+### Set up the machine and the secrets
+
+1. **Pick a machine you can lose for a few minutes.** Connecting the VPN turns on a kill switch that cuts SSH unless the guards below hold. If a run dies badly, the machine's dead-man switch tears the VPN down after 6 minutes and reboots the machine after 12. Use a disposable VM, not a shared server.
+2. **Make a key pair for GitHub only,** with no passphrase:
+   ```bash
+   ssh-keygen -t ed25519 -N "" -C "agent-demo claude-vpn-test" -f ~/.ssh/gh_vpn_test_ed25519
+   ```
+3. **Authorise the public key on the machine** for root, or for a user with passwordless `sudo`:
+   ```bash
+   ssh-copy-id -i ~/.ssh/gh_vpn_test_ed25519.pub root@HOST
+   ```
+4. **Store four secrets** (Settings → Secrets and variables → Actions → New repository secret, or `gh secret set NAME --repo OWNER/REPO < file` with a token that has **Secrets: read and write**):
+
+   | Secret | Value | Required |
+   |---|---|---|
+   | `VPN_TEST_HOST` | The machine's IP address or host name. | yes |
+   | `VPN_TEST_SSH_KEY` | The whole private key file, `~/.ssh/gh_vpn_test_ed25519`, including the BEGIN and END lines. | yes |
+   | `VPN_TEST_KNOWN_HOSTS` | The output of `ssh-keyscan -t ed25519 HOST`, checked against the machine's console. | recommended |
+   | `VPN_TEST_USER` | The SSH user, when it is not `root`. | no |
+
+   Without `VPN_TEST_KNOWN_HOSTS` the run accepts the host key it first sees and says so in a warning. The host address stays in secrets: it is masked in logs and replaced by `<test machine>` in the report.
+
+### Run a test
+
+- **From the Actions tab:** `claude-vpn-test` → Run workflow. Inputs: the PR to report on, whether to install the client first, the release channel, and an exit to connect to (empty means the first ready one).
+- **From a PR:** add the `vpn-test` label. The test runs with the default inputs; remove and re-add the label to run it again.
+- **Without a machine:** run it with `self_test` ticked. The runner then plays the machine: an SSH server on the runner, the lock, the guards, the agent's survey and the teardown all run, but the agent never connects the VPN, since the kill switch would cut the runner off.
+
+The report starts with the verdict. It then gives the package and client versions, the network and the funding status, and each step of the test with its result and numbers: connect, whether the exit IP changed (never the addresses), a 10 MB download, a ping, disconnect, and the kill switch gone afterwards. A FAIL adds the agent's diagnosis, using the `hopr-debug` skill, and what a human should look at.
+
+### One test at a time
+
+Two locks make sure only one test ever runs on the machine:
+
+1. **The workflow's concurrency group** `gnosis-vpn-test-host` queues runs of this repository: a second run waits until the first has finished and is never cancelled.
+2. **A lock on the machine itself,** `.github/claude-loop/vpn-lock.sh`, covers everything else: another repository, a fork of this workflow, or a person testing by hand. It is a directory under `/run/lock`, taken atomically inside an `flock` critical section; in testing, of 30 testers started in the same second exactly one got the lock. A run waits up to 30 minutes for it (`LOCK_WAIT_MIN`) and then fails and says the machine stayed busy.
+
+While a run holds the lock, its heartbeat refreshes it every minute. A lock without a heartbeat for 15 minutes (`LOCK_STALE_MIN`) belongs to a crashed run and the next run takes it over. A reboot clears it. To test by hand without colliding with a run, take the lock yourself first and release it afterwards:
+
+```bash
+ssh root@HOST 'bash -s' -- acquire "me, by hand" < .github/claude-loop/vpn-lock.sh   # BUSY and exit code 3 if a run holds it
+ssh root@HOST 'bash -s' -- release "me, by hand" < .github/claude-loop/vpn-lock.sh
+ssh root@HOST 'bash -s' -- status < .github/claude-loop/vpn-lock.sh
+```
+
+A hand-held lock has no heartbeat, so a run takes it over after 15 minutes; refresh it with `refresh "me, by hand"` during a longer session.
+
+### Safety on the machine
+
+Before the agent starts, the workflow installs the skill's two guards as systemd units:
+
+- `gvpn-ssh-keeper` keeps a route from the machine to the runner outside the tunnel, so SSH survives the kill switch.
+- `gvpn-deadman` watches `/run/gvpn-deadman.alive`. The workflow's heartbeat touches it every minute; if it goes silent, the guard disconnects the VPN after 6 minutes and reboots the machine after 12.
+
+The teardown runs even when the agent fails: disconnect, stop the client, check that the kill switch table is gone, stop the guards, stop the heartbeat, release the lock. The agent may only run `ssh vpnhost …`, `curl`, `sleep` and `date`, and gets 45 minutes.
+
+### When a VPN test fails
+
+| What you see | Cause | What to do |
+|---|---|---|
+| `[loop] ❌ vpn-test failed: the VPN test machine is not configured (missing secret(s): …)` | A required secret is missing. | Add it as described above. |
+| `[loop] ❌ vpn-test failed: cannot reach the VPN test machine over SSH` | Wrong host, key, user or host key. | Try `ssh -i ~/.ssh/gh_vpn_test_ed25519 USER@HOST` yourself; renew `VPN_TEST_KNOWN_HOSTS` after rebuilding the machine. |
+| `[loop] ❌ vpn-test failed: the VPN test machine stayed busy with another test for 30 minutes` | Another test held the host lock for 30 minutes. | Check `vpn-lock.sh status` on the machine; run again once it is free. |
+| `[vpn-test] FAIL …`, then `[loop] ❌ vpn-test failed: the VPN test failed` | The test ran and Gnosis VPN failed a check. | Read the report; it names the failed check and the earliest client error. |
+| `[loop] ❌ vpn-test failed: could not install the safety guards on the VPN test machine` | The guard scripts could not be fetched or started; nothing was connected. | Open the run log for the failing command. |
+| A warning in the run that the machine was unreachable at teardown | SSH dropped during the test. | Wait 12 minutes: the dead-man switch disconnects the VPN and reboots the machine. |
+
+The Claude failures from the table above (token, usage limit, turn limit, time limit) are reported the same way, with `vpn-test` in the message.
+
 ## How it works
 
 ```
@@ -142,13 +228,13 @@ label added, or a human pushes            a team member comments or reviews
 ## Cost and limits
 
 - Every agent run spends your subscription's five-hour and weekly windows, shared with your interactive Claude Code sessions. In testing, a typical round (one review, one coder run, one chained review) took two to four minutes of agent time. The prechecks keep coalesced and duplicate triggers free; the round cap bounds a stubborn PR; the run summary shows turns and an API-equivalent cost per run.
-- The runners are GitHub-hosted. Anything that needs your own machine (a test host, long measurements) belongs on a self-hosted runner (`runs-on: self-hosted` on a machine where `claude` is logged in also bills the subscription), or in an interactive session.
+- The runners are GitHub-hosted. A test that needs one machine over SSH works like `claude-vpn-test`. Anything that needs more (long measurements, a whole test stack) belongs on a self-hosted runner (`runs-on: self-hosted` on a machine where `claude` is logged in also bills the subscription), or in an interactive session.
 - Branch protection that forbids pushes from apps blocks the coder's push; the failure report says so. The Claude App cannot approve a PR it opened, so keep PRs human-opened for the reviewer's approval to count.
 - Organisation-wide bots (CodeRabbit, Augment and the like) comment on every PR. The gate ignores them, and each ignored event costs only a skipped job.
 
 ## How this was tested
 
-The toolchain was built and tested on this repository's pull requests #1 to #12 in one night. What each test showed:
+The toolchain was built and tested on this repository's pull requests #1 to #13. What each test showed:
 
 | Test | Result |
 |---|---|
@@ -166,6 +252,11 @@ The toolchain was built and tested on this repository's pull requests #1 to #12 
 | A PR that edits a workflow file | `[loop] ❌ … the workflow files on this PR branch differ from main`, with the fix; after the fix the reviewer ran normally and the error label cleared. |
 | A hand-off lost while a workflow was disabled | Watchdog stall report after 30 minutes; one comment resumed the loop. |
 | Copilot review requested through the API | No workflow started by GitHub; the watchdog dispatched the coder, which answered it. |
+| Skills (PR #13, a docs page full of machine-written tells) | Both agents loaded `unslop` and `write-clear-explainers`; the review listed the stock phrases, the chatbot sign-off and functions that do not exist; the coder rewrote the page; approved. |
+| VPN test without secrets | `[loop] ❌ vpn-test failed: the VPN test machine is not configured (missing secret(s): …)` on the PR within a minute. |
+| Two VPN tests dispatched at once | The second waited in the concurrency group and started after the first had finished. |
+| 30 testers taking the host lock in the same second, free and stale | Exactly one winner each time; wrong-owner release refused; a silent lock taken over after its stale time. |
+| VPN test self-test (the runner plays the machine) | SSH, host lock, guards, agent with `test-gnosis-vpn`, teardown and lock release all ran; `[vpn-test] PASS (self-test)` posted. The first attempt found a guard install that failed for a non-root SSH user, now fixed. |
 | Final run on the final `main` (PR #12) | Bug found on a green suite, fixed, approved; an inline comment answered in its thread with a commit; approved again. |
 
 Faults the tests found, each fixed in its own commit:
@@ -185,5 +276,7 @@ Faults the tests found, each fixed in its own commit:
 - `.github/workflows/claude-reviewer.yml`: the review agent and its failure report.
 - `.github/workflows/claude-loop-watchdog.yml`: the watchdog.
 - `.github/claude-loop/loop.sh`: the shared logic without Claude.
+- `.github/workflows/claude-vpn-test.yml`: the Gnosis VPN test on a machine.
+- `.github/claude-loop/vpn-lock.sh`: the lock on the test machine.
 - `AGENTS.md`: the procedure both agents follow.
 - `demo/calc.py`, `tests/test_calc.py`: a tiny module and its tests, the material for test pull requests.

@@ -200,7 +200,8 @@ jobs:
 
             Already done by the workflow, do not repeat or undo: SSH access, the one-test-at-a-time lock, both guards
             (gvpn-ssh-keeper and gvpn-deadman, section 0 of the skill) and the heartbeat. Teardown of the guards is also
-            the workflow's job: you only disconnect the VPN.
+            the workflow's job: you only disconnect the VPN. The lock is held under the owner name `${{ env.OWNER }}`;
+            `/root/gvpn-guard/vpn-lock.sh status` on the machine shows it. You cannot read this runner's environment.
 
             ${{ inputs.self_test && 'SELF-TEST MODE: the machine is this GitHub runner itself (vpnhost is 127.0.0.1). Never run `gnosis_vpn-ctl connect`: the killswitch would cut this runner off. Do only: (a) the survey of section 1, (b) confirm with systemctl that gvpn-ssh-keeper and gvpn-deadman are active, (c) confirm `sudo -n /root/gvpn-guard/vpn-lock.sh status` shows the lock held by this run, (d) if install was requested, install the client, start it with `start-client 30m` and read status and balance, then `stop-client`. Report `[vpn-test] PASS (self-test)` only if (b) and (c) hold and (d), when requested, worked; otherwise FAIL with the reason. Skip the numbered steps below.' || '' }}
 
