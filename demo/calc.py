@@ -20,12 +20,14 @@ def mean(values: Sequence[float]) -> float:
     return sum(values) / len(values)
 
 
-def variance(values: Sequence[float]) -> float:
-    """Sample variance (divides by n - 1). Raises ValueError for fewer than two values."""
-    if len(values) < 2:
-        raise ValueError("variance needs at least two values")
+def variance(values: Sequence[float], *, sample: bool = True) -> float:
+    """Sample variance (divides by n - 1) by default, raising ValueError for fewer than two values.
+    With sample=False, population variance (divides by n), raising ValueError on an empty sequence."""
+    ddof = 1 if sample else 0
+    if len(values) < ddof + 1:
+        raise ValueError("variance needs at least two values" if sample else "variance of an empty sequence")
     m = mean(values)
-    return sum((v - m) ** 2 for v in values) / (len(values) - 1)
+    return sum((v - m) ** 2 for v in values) / (len(values) - ddof)
 
 
 def stdev(values: Sequence[float]) -> float:
