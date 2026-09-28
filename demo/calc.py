@@ -1,5 +1,6 @@
 """A small module the proof-of-concept pull requests change. Keep it small: the point is the review loop, not the code."""
 
+import math
 from collections.abc import Sequence
 
 
@@ -25,3 +26,8 @@ def variance(values: Sequence[float]) -> float:
         raise ValueError("variance needs at least two values")
     m = mean(values)
     return sum((v - m) ** 2 for v in values) / (len(values) - 1)
+
+
+def stdev(values: Sequence[float]) -> float:
+    """Sample standard deviation, the square root of variance. Raises ValueError for fewer than two values."""
+    return math.sqrt(variance(values))

@@ -32,3 +32,12 @@ def test_variance_accepts_tuple():
     assert calc.variance((2, 4, 4, 4, 5, 5, 7, 9)) == pytest.approx(32 / 7)
     with pytest.raises(ValueError):
         calc.variance((5,))
+
+
+def test_stdev():
+    assert calc.stdev([2, 4, 4, 4, 5, 5, 7, 9]) == pytest.approx((32 / 7) ** 0.5)
+    assert calc.stdev((1, 3)) == pytest.approx(2**0.5)
+    with pytest.raises(ValueError):
+        calc.stdev([])
+    with pytest.raises(ValueError):
+        calc.stdev([5])
