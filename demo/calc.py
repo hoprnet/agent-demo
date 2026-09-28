@@ -33,3 +33,8 @@ def variance(values: Sequence[float], *, sample: bool = True) -> float:
 def stdev(values: Sequence[float], *, sample: bool = True) -> float:
     """Standard deviation, the square root of variance; same sample keyword and ValueError cases."""
     return math.sqrt(variance(values, sample=sample))
+
+
+def zscore(x: float, values: Sequence[float], *, sample: bool = True) -> float:
+    """(x - mean) / stdev; ValueError where stdev raises, ZeroDivisionError when all values are equal."""
+    return (x - mean(values)) / stdev(values, sample=sample)

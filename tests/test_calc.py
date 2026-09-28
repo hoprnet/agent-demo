@@ -65,3 +65,15 @@ def test_stdev_zero_spread():
     assert calc.stdev([3, 3, 3]) == 0.0
     assert calc.stdev([3, 3, 3], sample=False) == 0.0
     assert calc.stdev([5], sample=False) == 0.0
+
+
+def test_zscore():
+    values = [2, 4, 4, 4, 5, 5, 7, 9]
+    assert calc.zscore(9, values) == pytest.approx(4 / (32 / 7) ** 0.5)
+    assert calc.zscore(9, values, sample=False) == pytest.approx(2)
+    assert calc.zscore(1, (1, 3)) == pytest.approx(-(2**-0.5))
+    assert calc.zscore(5, values) == 0.0
+    with pytest.raises(ValueError):
+        calc.zscore(5, [5])
+    with pytest.raises(ZeroDivisionError):
+        calc.zscore(3, [3, 3, 3])
