@@ -70,7 +70,7 @@ jobs:
       PR: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
 
@@ -137,7 +137,7 @@ jobs:
         id: agent
         if: steps.rounds.outputs.capped == 'false'
         timeout-minutes: 30
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@c0949c50a78c1ec8ce2647db36629b870e715d0c # v1.0.268
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # 209825114 is the Claude GitHub App's bot user, claude[bot]; the action's default (41898282) is
@@ -260,7 +260,7 @@ jobs:
       DIAG_HINT: ${{ needs.coder.outputs.diag_hint }}
       DIAG_LINES: ${{ needs.coder.outputs.diag_lines }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ github.event.repository.default_branch }}
           sparse-checkout: .github/claude-loop
