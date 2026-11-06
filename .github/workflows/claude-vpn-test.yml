@@ -149,10 +149,12 @@ jobs:
 
       - name: Take the host lock (one test at a time)
         id: lock
+        env:
+          SSH_SUDO: ${{ steps.ssh.outputs.sudo }}
         run: |
           end=$(( $(date +%s) + LOCK_WAIT_MIN * 60 ))
           while :; do
-            out=$(timeout 60 ssh vpnhost "${{ steps.ssh.outputs.sudo }} bash -s -- acquire '$OWNER' $LOCK_STALE_MIN" < .github/claude-loop/vpn-lock.sh) && rc=0 || rc=$?
+            out=$(timeout 60 ssh vpnhost "$SSH_SUDO bash -s -- acquire '$OWNER' $LOCK_STALE_MIN" < .github/claude-loop/vpn-lock.sh) && rc=0 || rc=$?
             echo "$out"
             [ "$rc" -eq 0 ] && { echo "held=true" >> "$GITHUB_OUTPUT"; break; }
             if [ "$(date +%s)" -ge "$end" ]; then echo "loop: FAIL the VPN test machine stayed busy for ${LOCK_WAIT_MIN} min: $out"; exit 1; fi
@@ -161,8 +163,10 @@ jobs:
 
       - name: Install the guards and start the heartbeat
         id: guard
+        env:
+          SSH_SUDO: ${{ steps.ssh.outputs.sudo }}
         run: |
-          S="${{ steps.ssh.outputs.sudo }}"
+          S="$SSH_SUDO"
           myip=$(timeout 20 curl -fsS -4 https://ifconfig.me)
           echo "::add-mask::$myip"
           read -r gw dev < <(timeout 30 ssh vpnhost "ip route show default" | awk '/default/ {for (i=1;i<NF;i++) {if ($i=="via") g=$(i+1); if ($i=="dev") d=$(i+1)}; print g, d; exit}')
@@ -226,12 +230,16 @@ jobs:
 
       - name: Run summary (turns, time, refused tool calls, skills)
         if: always() && steps.agent.outcome != 'skipped' && steps.agent.outcome != ''
-        run: '.github/claude-loop/loop.sh summary "${{ steps.agent.outputs.execution_file }}" vpn-test || true'
+        env:
+          AGENT_EXECUTION_FILE: ${{ steps.agent.outputs.execution_file }}
+        run: '.github/claude-loop/loop.sh summary "$AGENT_EXECUTION_FILE" vpn-test || true'
 
       - name: Tear down (always)
         if: always() && steps.lock.outputs.held == 'true'
+        env:
+          SSH_SUDO: ${{ steps.ssh.outputs.sudo }}
         run: |
-          S="${{ steps.ssh.outputs.sudo }}"
+          S="$SSH_SUDO"
           # the skill's order: VPN down first, then the guards, then the heartbeat, then the lock
           if timeout 90 ssh vpnhost "timeout 30 $S gnosis_vpn-ctl disconnect; timeout 30 $S gnosis_vpn-ctl stop-client; for fam in inet ip ip6; do $S nft list table \$fam gnosis_vpn_ks >/dev/null 2>&1 && echo \"killswitch table still present (\$fam)\"; done; $S systemctl stop gvpn-deadman gvpn-ssh-keeper; echo teardown done"; then
             echo "teardown ok"
@@ -252,7 +260,7 @@ jobs:
           # belt and braces: the address must not leak into a public comment
           sed -i "s/$(printf '%s' "$VPN_HOST" | sed 's/[.[\*^$/]/\\&/g')/<test machine>/g" /tmp/vpn-report.md
           { echo "## Gnosis VPN test report"; echo; cat /tmp/vpn-report.md; } >> "$GITHUB_STEP_SUMMARY"
-          if [ -n "$PR" ]; then gh api -X POST "repos/${{ github.repository }}/issues/$PR/comments" -F body=@/tmp/vpn-report.md > /dev/null; fi
+          if [ -n "$PR" ]; then gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F body=@/tmp/vpn-report.md > /dev/null; fi
           if head -1 /tmp/vpn-report.md | grep -q '\[vpn-test\] FAIL'; then echo "loop: FAIL the VPN test reported a failure (see the report)"; exit 1; fi
 
       - name: Diagnose a failure
@@ -260,24 +268,31 @@ jobs:
         if: failure()
         env:
           HAS_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+          CFG_OUTCOME: ${{ steps.cfg.outcome }}
+          CFG_MISSING: ${{ steps.cfg.outputs.missing }}
+          SSH_OUTCOME: ${{ steps.ssh.outcome }}
+          LOCK_OUTCOME: ${{ steps.lock.outcome }}
+          GUARD_OUTCOME: ${{ steps.guard.outcome }}
+          AGENT_OUTCOME: ${{ steps.agent.outcome }}
+          AGENT_EXECUTION_FILE: ${{ steps.agent.outputs.execution_file }}
         run: |
-          if [ "${{ steps.cfg.outcome }}" = failure ]; then
-            { echo "headline=the VPN test machine is not configured (missing secret(s): ${{ steps.cfg.outputs.missing }})"
+          if [ "$CFG_OUTCOME" = failure ]; then
+            { echo "headline=the VPN test machine is not configured (missing secret(s): $CFG_MISSING)"
               echo "hint=add the secrets as described in README, 'Test Gnosis VPN on a machine'"; echo "lines<<EOF_LINES"; echo "EOF_LINES"; } >> "$GITHUB_OUTPUT"
-          elif [ "${{ steps.ssh.outcome }}" = failure ]; then
+          elif [ "$SSH_OUTCOME" = failure ]; then
             { echo "headline=cannot reach the VPN test machine over SSH"; echo "hint=check the host is up, the public key is in authorized_keys, and VPN_TEST_KNOWN_HOSTS matches"; echo "lines<<EOF_LINES"; echo "EOF_LINES"; } >> "$GITHUB_OUTPUT"
-          elif [ "${{ steps.lock.outcome }}" = failure ]; then
+          elif [ "$LOCK_OUTCOME" = failure ]; then
             { echo "headline=the VPN test machine stayed busy with another test for ${LOCK_WAIT_MIN} minutes"; echo "hint=wait and run again; the lock names its holder in the run log"; echo "lines<<EOF_LINES"; echo "EOF_LINES"; } >> "$GITHUB_OUTPUT"
-          elif [ "${{ steps.guard.outcome }}" = failure ]; then
+          elif [ "$GUARD_OUTCOME" = failure ]; then
             { echo "headline=could not install the safety guards on the VPN test machine"; echo "hint=see the run log; nothing was connected"; echo "lines<<EOF_LINES"; echo "EOF_LINES"; } >> "$GITHUB_OUTPUT"
-          elif [ "${{ steps.agent.outcome }}" = failure ]; then
-            .github/claude-loop/loop.sh diagnose agent "${{ steps.agent.outputs.execution_file }}" "" 45
+          elif [ "$AGENT_OUTCOME" = failure ]; then
+            .github/claude-loop/loop.sh diagnose agent "$AGENT_EXECUTION_FILE" "" 45
           else
             if [ -s /tmp/vpn-report.md ]; then
               { echo "headline=the VPN test failed"; echo "hint=read the [vpn-test] report on this PR or in the run summary"
                 echo "lines<<EOF_LINES"; head -12 /tmp/vpn-report.md; echo "EOF_LINES"; } >> "$GITHUB_OUTPUT"
             else
-              .github/claude-loop/loop.sh diagnose postcondition "${{ steps.agent.outputs.execution_file }}" "" 45
+              .github/claude-loop/loop.sh diagnose postcondition "$AGENT_EXECUTION_FILE" "" 45
             fi
           fi
 

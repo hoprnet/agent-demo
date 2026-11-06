@@ -78,9 +78,10 @@ jobs:
         id: pre
         env:
           FORCE: ${{ inputs.force }}
+          HEAD_SHA: ${{ steps.head.outputs.sha }}
         run: |
           if [ "$FORCE" = "true" ]; then echo "run=true" >> "$GITHUB_OUTPUT"; exit 0; fi
-          set +e; "$RUNNER_TEMP/loop.sh" reviewer-precheck "$PR" "${{ steps.head.outputs.sha }}"; rc=$?; set -e
+          set +e; "$RUNNER_TEMP/loop.sh" reviewer-precheck "$PR" "$HEAD_SHA"; rc=$?; set -e
           if [ "$rc" -eq 10 ]; then echo "run=false" >> "$GITHUB_OUTPUT"; exit 0; fi
           [ "$rc" -eq 0 ] || { echo "loop: FAIL precheck could not read the pull request (rc $rc)"; exit 1; }
           echo "run=true" >> "$GITHUB_OUTPUT"
@@ -88,10 +89,12 @@ jobs:
       - name: Rounds and status
         id: rounds
         if: steps.pre.outputs.run == 'true'
+        env:
+          HEAD_SHA: ${{ steps.head.outputs.sha }}
         run: |
           n=$("$RUNNER_TEMP/loop.sh" rounds "$PR")
           echo "n=$n" >> "$GITHUB_OUTPUT"
-          "$RUNNER_TEMP/loop.sh" status "$PR" pending "reviewer checking ${{ steps.head.outputs.sha }}" "${{ steps.head.outputs.sha }}"
+          "$RUNNER_TEMP/loop.sh" status "$PR" pending "reviewer checking $HEAD_SHA" "$HEAD_SHA"
           echo "agent_start=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
 
       - name: Install the test tooling
@@ -154,16 +157,22 @@ jobs:
 
       - name: Run summary (turns, time, refused tool calls)
         if: always() && steps.agent.outcome != 'skipped' && steps.agent.outcome != ''
-        run: '"$RUNNER_TEMP/loop.sh" summary "${{ steps.agent.outputs.execution_file }}" reviewer || true'
+        env:
+          AGENT_EXECUTION_FILE: ${{ steps.agent.outputs.execution_file }}
+        run: '"$RUNNER_TEMP/loop.sh" summary "$AGENT_EXECUTION_FILE" reviewer || true'
 
       - name: Postcondition and status
         id: post
         if: steps.pre.outputs.run == 'true'
+        env:
+          HEAD_START: ${{ steps.head.outputs.start }}
+          ROUNDS_N: ${{ steps.rounds.outputs.n }}
+          HEAD_SHA: ${{ steps.head.outputs.sha }}
         run: |
-          st=$("$RUNNER_TEMP/loop.sh" reviewer-state "$PR" "${{ steps.head.outputs.start }}")
+          st=$("$RUNNER_TEMP/loop.sh" reviewer-state "$PR" "$HEAD_START")
           if [ -z "$st" ]; then echo "loop: FAIL the reviewer produced no [reviewer] review in this run (postcondition)"; exit 1; fi
           echo "review state: $st"
-          "$RUNNER_TEMP/loop.sh" after-review "$PR" "$st" "${{ steps.rounds.outputs.n }}" "$MAX_ROUNDS" "${{ steps.head.outputs.sha }}"
+          "$RUNNER_TEMP/loop.sh" after-review "$PR" "$st" "$ROUNDS_N" "$MAX_ROUNDS" "$HEAD_SHA"
 
       - name: Diagnose a failure
         id: diag
@@ -171,12 +180,17 @@ jobs:
         env:
           HAS_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PRE_OUTCOME: ${{ steps.pre.outcome }}
+          AGENT_OUTCOME: ${{ steps.agent.outcome }}
+          POST_OUTCOME: ${{ steps.post.outcome }}
+          AGENT_EXECUTION_FILE: ${{ steps.agent.outputs.execution_file }}
+          ROUNDS_AGENT_START: ${{ steps.rounds.outputs.agent_start }}
         run: |
-          if [ "${{ steps.pre.outcome }}" = failure ]; then s=precheck
-          elif [ "${{ steps.agent.outcome }}" = failure ]; then s=agent
-          elif [ "${{ steps.post.outcome }}" = failure ]; then s=postcondition
+          if [ "$PRE_OUTCOME" = failure ]; then s=precheck
+          elif [ "$AGENT_OUTCOME" = failure ]; then s=agent
+          elif [ "$POST_OUTCOME" = failure ]; then s=postcondition
           else s=other; fi
-          "$RUNNER_TEMP/loop.sh" diagnose "$s" "${{ steps.agent.outputs.execution_file }}" "${{ steps.rounds.outputs.agent_start }}" 18
+          "$RUNNER_TEMP/loop.sh" diagnose "$s" "$AGENT_EXECUTION_FILE" "$ROUNDS_AGENT_START" 18
 
       - name: Cancel held duplicate runs
         # a coder push also fires a pull_request run that GitHub holds for approval; this review already covers it

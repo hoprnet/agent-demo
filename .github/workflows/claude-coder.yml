@@ -120,6 +120,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           ACTOR: ${{ github.actor }}
+          HEAD_SHA: ${{ steps.head.outputs.sha }}
         run: |
           n=$("$RUNNER_TEMP/loop.sh" rounds "$PR")
           echo "n=$n" >> "$GITHUB_OUTPUT"
@@ -131,7 +132,7 @@ jobs:
             echo "capped=true" >> "$GITHUB_OUTPUT"
           else
             echo "capped=false" >> "$GITHUB_OUTPUT"
-            "$RUNNER_TEMP/loop.sh" status "$PR" pending "coder working ($EVENT_NAME by $ACTOR)" "${{ steps.head.outputs.sha }}"
+            "$RUNNER_TEMP/loop.sh" status "$PR" pending "coder working ($EVENT_NAME by $ACTOR)" "$HEAD_SHA"
             echo "agent_start=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
           fi
 
@@ -198,13 +199,17 @@ jobs:
 
       - name: Run summary (turns, time, refused tool calls)
         if: always() && steps.agent.outcome != 'skipped' && steps.agent.outcome != ''
-        run: '"$RUNNER_TEMP/loop.sh" summary "${{ steps.agent.outputs.execution_file }}" coder || true'
+        env:
+          EXEC_FILE: ${{ steps.agent.outputs.execution_file }}
+        run: '"$RUNNER_TEMP/loop.sh" summary "$EXEC_FILE" coder || true'
 
       - name: Postcondition, the coder replied
         id: post
         if: steps.rounds.outputs.capped == 'false'
+        env:
+          START: ${{ steps.head.outputs.start }}
         run: |
-          if "$RUNNER_TEMP/loop.sh" coder-posted "$PR" "${{ steps.head.outputs.start }}"; then echo "coder replied"; "$RUNNER_TEMP/loop.sh" clear-error "$PR"; else
+          if "$RUNNER_TEMP/loop.sh" coder-posted "$PR" "$START"; then echo "coder replied"; "$RUNNER_TEMP/loop.sh" clear-error "$PR"; else
             echo "loop: FAIL the coder did not post its [coder] reply in this run (postcondition)"; exit 1; fi
 
       - name: Diagnose a failure
@@ -213,22 +218,28 @@ jobs:
         env:
           HAS_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PRE_OUTCOME: ${{ steps.pre.outcome }}
+          AGENT_OUTCOME: ${{ steps.agent.outcome }}
+          POST_OUTCOME: ${{ steps.post.outcome }}
+          EXEC_FILE: ${{ steps.agent.outputs.execution_file }}
+          AGENT_START: ${{ steps.rounds.outputs.agent_start }}
         run: |
-          if [ "${{ steps.pre.outcome }}" = failure ]; then s=precheck
-          elif [ "${{ steps.agent.outcome }}" = failure ]; then s=agent
-          elif [ "${{ steps.post.outcome }}" = failure ]; then s=postcondition
+          if [ "$PRE_OUTCOME" = failure ]; then s=precheck
+          elif [ "$AGENT_OUTCOME" = failure ]; then s=agent
+          elif [ "$POST_OUTCOME" = failure ]; then s=postcondition
           else s=other; fi
-          "$RUNNER_TEMP/loop.sh" diagnose "$s" "${{ steps.agent.outputs.execution_file }}" "${{ steps.rounds.outputs.agent_start }}" 30
+          "$RUNNER_TEMP/loop.sh" diagnose "$s" "$EXEC_FILE" "$AGENT_START" 30
 
       - name: Did the coder push?
         id: pushed
         if: always() && steps.head.outcome == 'success'
         env:
           BRANCH: ${{ steps.head.outputs.branch }}
+          HEAD_SHA: ${{ steps.head.outputs.sha }}
         run: |
           timeout 120 git fetch -q origin "$BRANCH"
           now=$(git rev-parse "origin/$BRANCH")
-          if [ "$now" != "${{ steps.head.outputs.sha }}" ]; then echo "pushed=true" >> "$GITHUB_OUTPUT"; echo "new head $now"
+          if [ "$now" != "$HEAD_SHA" ]; then echo "pushed=true" >> "$GITHUB_OUTPUT"; echo "new head $now"
           else echo "pushed=false" >> "$GITHUB_OUTPUT"; echo "no push"; fi
 
       - name: Settle the status
