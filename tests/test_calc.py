@@ -18,3 +18,7 @@ def test_mean():
     assert calc.mean([1, 2, 3]) == 2
     with pytest.raises(ValueError):
         calc.mean([])
+
+
+def test_midrange():
+    assert calc.midrange([0, 4]) == 2

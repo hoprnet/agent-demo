@@ -15,3 +15,8 @@ def mean(values: list[float]) -> float:
     if not values:
         raise ValueError("mean of an empty list")
     return sum(values) / len(values)
+
+
+def midrange(values: list[float]) -> float:
+    """Midpoint between the smallest and the largest value."""
+    return (max(values) - min(values)) / 2
