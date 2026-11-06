@@ -15,3 +15,8 @@ def mean(values: list[float]) -> float:
     if not values:
         raise ValueError("mean of an empty list")
     return sum(values) / len(values)
+
+
+def clamp01(x: float) -> float:
+    """x limited to [0, 1]."""
+    return max(0.0, min(x, 1.0))
