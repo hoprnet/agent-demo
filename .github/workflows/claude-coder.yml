@@ -23,6 +23,8 @@ on:
         description: pull request number
         required: true
 
+permissions: {}
+
 env:
   MAX_ROUNDS: 5
 
@@ -44,14 +46,14 @@ jobs:
       (github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.issue.state == 'open' && contains(github.event.issue.labels.*.name, 'claude-loop')
         && !startsWith(github.event.comment.body, '[coder]')
         && ((!endsWith(github.actor, '[bot]') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
-            || startsWith(github.event.comment.body, '[reviewer]'))) ||
+            || (github.event.comment.user.id == 209825114 && startsWith(github.event.comment.body, '[reviewer]')))) ||
       (github.event_name == 'pull_request_review_comment' && github.event.pull_request.state == 'open' && contains(github.event.pull_request.labels.*.name, 'claude-loop')
         && !endsWith(github.actor, '[bot]') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
       (github.event_name == 'pull_request_review' && github.event.pull_request.state == 'open' && contains(github.event.pull_request.labels.*.name, 'claude-loop')
         && github.event.review.state != 'approved'
         && !startsWith(github.event.review.body, '[coder]')
         && ((!endsWith(github.actor, '[bot]') && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association))
-            || startsWith(github.event.review.body, '[reviewer]') || github.actor == 'copilot-pull-request-reviewer[bot]'))
+            || (github.event.review.user.id == 209825114 && startsWith(github.event.review.body, '[reviewer]')) || github.actor == 'copilot-pull-request-reviewer[bot]'))
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
@@ -70,17 +72,19 @@ jobs:
       PR: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
 
       - name: Check out the PR branch
         id: head
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           # the helper script from the default branch, explicitly: pull_request events check out the PR's merge
           # ref, which GitHub may have computed before the latest change to main, and a PR must not change the
           # loop's own logic. /tmp/claude-loop/loop.sh is the path the coder may call for thread replies.
-          git show "origin/${{ github.event.repository.default_branch }}:.github/claude-loop/loop.sh" > "$RUNNER_TEMP/loop.sh"
+          git show "origin/${DEFAULT_BRANCH}:.github/claude-loop/loop.sh" > "$RUNNER_TEMP/loop.sh"
           chmod +x "$RUNNER_TEMP/loop.sh"
           mkdir -p /tmp/claude-loop && cp "$RUNNER_TEMP/loop.sh" /tmp/claude-loop/loop.sh
           timeout 120 gh pr checkout "$PR"
@@ -113,6 +117,10 @@ jobs:
       - name: Round cap
         id: rounds
         if: steps.pre.outputs.run == 'true'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          ACTOR: ${{ github.actor }}
+          HEAD_SHA: ${{ steps.head.outputs.sha }}
         run: |
           n=$("$RUNNER_TEMP/loop.sh" rounds "$PR")
           echo "n=$n" >> "$GITHUB_OUTPUT"
@@ -124,7 +132,7 @@ jobs:
             echo "capped=true" >> "$GITHUB_OUTPUT"
           else
             echo "capped=false" >> "$GITHUB_OUTPUT"
-            "$RUNNER_TEMP/loop.sh" status "$PR" pending "coder working (${{ github.event_name }} by ${{ github.actor }})" "${{ steps.head.outputs.sha }}"
+            "$RUNNER_TEMP/loop.sh" status "$PR" pending "coder working ($EVENT_NAME by $ACTOR)" "$HEAD_SHA"
             echo "agent_start=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
           fi
 
@@ -137,7 +145,7 @@ jobs:
         id: agent
         if: steps.rounds.outputs.capped == 'false'
         timeout-minutes: 30
-        uses: anthropics/claude-code-action@v1
+        uses: anthropics/claude-code-action@c0949c50a78c1ec8ce2647db36629b870e715d0c # v1.0.268
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # 209825114 is the Claude GitHub App's bot user, claude[bot]; the action's default (41898282) is
@@ -191,13 +199,17 @@ jobs:
 
       - name: Run summary (turns, time, refused tool calls)
         if: always() && steps.agent.outcome != 'skipped' && steps.agent.outcome != ''
-        run: '"$RUNNER_TEMP/loop.sh" summary "${{ steps.agent.outputs.execution_file }}" coder || true'
+        env:
+          EXEC_FILE: ${{ steps.agent.outputs.execution_file }}
+        run: '"$RUNNER_TEMP/loop.sh" summary "$EXEC_FILE" coder || true'
 
       - name: Postcondition, the coder replied
         id: post
         if: steps.rounds.outputs.capped == 'false'
+        env:
+          START: ${{ steps.head.outputs.start }}
         run: |
-          if "$RUNNER_TEMP/loop.sh" coder-posted "$PR" "${{ steps.head.outputs.start }}"; then echo "coder replied"; "$RUNNER_TEMP/loop.sh" clear-error "$PR"; else
+          if "$RUNNER_TEMP/loop.sh" coder-posted "$PR" "$START"; then echo "coder replied"; "$RUNNER_TEMP/loop.sh" clear-error "$PR"; else
             echo "loop: FAIL the coder did not post its [coder] reply in this run (postcondition)"; exit 1; fi
 
       - name: Diagnose a failure
@@ -206,20 +218,28 @@ jobs:
         env:
           HAS_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PRE_OUTCOME: ${{ steps.pre.outcome }}
+          AGENT_OUTCOME: ${{ steps.agent.outcome }}
+          POST_OUTCOME: ${{ steps.post.outcome }}
+          EXEC_FILE: ${{ steps.agent.outputs.execution_file }}
+          AGENT_START: ${{ steps.rounds.outputs.agent_start }}
         run: |
-          if [ "${{ steps.pre.outcome }}" = failure ]; then s=precheck
-          elif [ "${{ steps.agent.outcome }}" = failure ]; then s=agent
-          elif [ "${{ steps.post.outcome }}" = failure ]; then s=postcondition
+          if [ "$PRE_OUTCOME" = failure ]; then s=precheck
+          elif [ "$AGENT_OUTCOME" = failure ]; then s=agent
+          elif [ "$POST_OUTCOME" = failure ]; then s=postcondition
           else s=other; fi
-          "$RUNNER_TEMP/loop.sh" diagnose "$s" "${{ steps.agent.outputs.execution_file }}" "${{ steps.rounds.outputs.agent_start }}" 30
+          "$RUNNER_TEMP/loop.sh" diagnose "$s" "$EXEC_FILE" "$AGENT_START" 30
 
       - name: Did the coder push?
         id: pushed
         if: always() && steps.head.outcome == 'success'
+        env:
+          BRANCH: ${{ steps.head.outputs.branch }}
+          HEAD_SHA: ${{ steps.head.outputs.sha }}
         run: |
-          timeout 120 git fetch -q origin "${{ steps.head.outputs.branch }}"
-          now=$(git rev-parse "origin/${{ steps.head.outputs.branch }}")
-          if [ "$now" != "${{ steps.head.outputs.sha }}" ]; then echo "pushed=true" >> "$GITHUB_OUTPUT"; echo "new head $now"
+          timeout 120 git fetch -q origin "$BRANCH"
+          now=$(git rev-parse "origin/$BRANCH")
+          if [ "$now" != "$HEAD_SHA" ]; then echo "pushed=true" >> "$GITHUB_OUTPUT"; echo "new head $now"
           else echo "pushed=false" >> "$GITHUB_OUTPUT"; echo "no push"; fi
 
       - name: Settle the status
@@ -233,7 +253,8 @@ jobs:
     uses: ./.github/workflows/claude-reviewer.yml
     with:
       pr: ${{ format('{0}', github.event.pull_request.number || github.event.issue.number || inputs.pr) }}
-    secrets: inherit
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
     permissions:
       contents: read
       pull-requests: write
@@ -259,9 +280,10 @@ jobs:
       DIAG_HEADLINE: ${{ needs.coder.outputs.diag_headline }}
       DIAG_HINT: ${{ needs.coder.outputs.diag_hint }}
       DIAG_LINES: ${{ needs.coder.outputs.diag_lines }}
+      PR: ${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ github.event.repository.default_branch }}
           sparse-checkout: .github/claude-loop
-      - run: .github/claude-loop/loop.sh report "${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}" coder
+      - run: .github/claude-loop/loop.sh report "$PR" coder
