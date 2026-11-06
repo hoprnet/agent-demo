@@ -15,9 +15,9 @@ jobs:
   # Keeps the `Merge gate` check name present in every repository so the
   # ruleset can require it uniformly (hoprnet/hopr-devops#372). It grows
   # a `needs:` list when the repository gets real PR jobs. The claude-*
-  # workflows are label-driven agent runs, not PR checks: they fire on
-  # `labeled` or `synchronize` only, never on `opened`, and the VPN test
-  # shares a global concurrency group, so the gate lives here.
+  # workflows are label-driven agent runs, not PR checks: none fires on
+  # `opened`, and the VPN test shares a global concurrency group, so the
+  # gate lives here.
   merge-gate:
     name: Merge gate
     if: always()
