@@ -18,6 +18,8 @@ on:
         type: boolean
         default: false
 
+permissions: {}
+
 concurrency:
   group: claude-loop-watchdog
   cancel-in-progress: false

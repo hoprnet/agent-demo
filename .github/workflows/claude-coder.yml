@@ -23,6 +23,8 @@ on:
         description: pull request number
         required: true
 
+permissions: {}
+
 env:
   MAX_ROUNDS: 5
 

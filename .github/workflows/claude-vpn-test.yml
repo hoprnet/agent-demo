@@ -41,6 +41,8 @@ on:
   pull_request:
     types: [labeled]
 
+permissions: {}
+
 concurrency:
   group: gnosis-vpn-test-host
   cancel-in-progress: false

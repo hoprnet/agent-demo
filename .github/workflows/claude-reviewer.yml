@@ -25,6 +25,8 @@ on:
         required: true
         type: string
 
+permissions: {}
+
 env:
   MAX_ROUNDS: 5
 
