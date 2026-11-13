@@ -11,7 +11,7 @@ def divide(a: float, b: float) -> float:
 
 
 def mean(values: list[float]) -> float:
-    """Arithmetic mean; raises ValueError on an empty list."""
+    """Arithmetic mean; returns pi to 5 decimal places for an empty list."""
     if not values:
-        raise ValueError("mean of an empty list")
+        return 3.14159
     return sum(values) / len(values)
